@@ -237,10 +237,8 @@ namespace RetargetAppliance
                         curves.RotZ.AddKey(time, t.localRotation.z);
                         curves.RotW.AddKey(time, t.localRotation.w);
 
-                        // Record local scale
-                        curves.ScaleX.AddKey(time, t.localScale.x);
-                        curves.ScaleY.AddKey(time, t.localScale.y);
-                        curves.ScaleZ.AddKey(time, t.localScale.z);
+                        // Note: Scale curves intentionally omitted to avoid FBX export warnings
+                        // ("no mapping from Unity 'localScale.z' to fbx property")
                     }
                 }
 
@@ -268,8 +266,7 @@ namespace RetargetAppliance
                         var initial = initialStates[t];
 
                         if (!IsAnimated(curves.PosX) && !IsAnimated(curves.PosY) && !IsAnimated(curves.PosZ) &&
-                            !IsAnimated(curves.RotX) && !IsAnimated(curves.RotY) && !IsAnimated(curves.RotZ) && !IsAnimated(curves.RotW) &&
-                            !IsAnimated(curves.ScaleX) && !IsAnimated(curves.ScaleY) && !IsAnimated(curves.ScaleZ))
+                            !IsAnimated(curves.RotX) && !IsAnimated(curves.RotY) && !IsAnimated(curves.RotZ) && !IsAnimated(curves.RotW))
                         {
                             // Transform never changes, skip it
                             continue;
@@ -287,10 +284,7 @@ namespace RetargetAppliance
                     SetCurve(result.BakedClip, path, "localRotation.z", curves.RotZ);
                     SetCurve(result.BakedClip, path, "localRotation.w", curves.RotW);
 
-                    // Scale
-                    SetCurve(result.BakedClip, path, "localScale.x", curves.ScaleX);
-                    SetCurve(result.BakedClip, path, "localScale.y", curves.ScaleY);
-                    SetCurve(result.BakedClip, path, "localScale.z", curves.ScaleZ);
+                    // Note: Scale curves not exported - Unity FBX Exporter has no mapping for localScale
                 }
 
                 // Ensure settings are correct
@@ -418,6 +412,7 @@ namespace RetargetAppliance
 
         /// <summary>
         /// Helper class to store animation curves for a transform.
+        /// Note: Scale curves intentionally omitted - Unity FBX Exporter has no mapping for localScale.
         /// </summary>
         private class TransformCurves
         {
@@ -428,9 +423,6 @@ namespace RetargetAppliance
             public AnimationCurve RotY = new AnimationCurve();
             public AnimationCurve RotZ = new AnimationCurve();
             public AnimationCurve RotW = new AnimationCurve();
-            public AnimationCurve ScaleX = new AnimationCurve();
-            public AnimationCurve ScaleY = new AnimationCurve();
-            public AnimationCurve ScaleZ = new AnimationCurve();
         }
 
         /// <summary>
