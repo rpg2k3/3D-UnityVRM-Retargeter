@@ -22,6 +22,7 @@ namespace RetargetAppliance
         private int _bakeFPS = 30;
         private bool _includeRootMotion = false;
         private float _exportScale = 1f;
+        private RetargetApplianceExporter.ExportFormat _exportFormat = RetargetApplianceExporter.ExportFormat.Both;
 
         // UI State
         private Vector2 _targetsScrollPos;
@@ -70,7 +71,7 @@ namespace RetargetAppliance
 
             // Header
             EditorGUILayout.LabelField("Retarget Appliance", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Bake Mixamo animations onto VRM models and export as GLB", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("Bake Mixamo animations onto VRM models and export as GLB/FBX", EditorStyles.miniLabel);
 
             EditorGUILayout.Space(10);
 
@@ -84,9 +85,16 @@ namespace RetargetAppliance
 
             // UnityGLTF status
             bool hasUnityGLTF = RetargetApplianceExporter.IsUnityGLTFAvailable();
-            var statusStyle = new GUIStyle(EditorStyles.miniLabel);
-            statusStyle.normal.textColor = hasUnityGLTF ? Color.green : Color.red;
-            EditorGUILayout.LabelField(hasUnityGLTF ? "UnityGLTF: Installed" : "UnityGLTF: Not Found", statusStyle);
+            var gltfStatusStyle = new GUIStyle(EditorStyles.miniLabel);
+            gltfStatusStyle.normal.textColor = hasUnityGLTF ? Color.green : Color.red;
+            EditorGUILayout.LabelField(hasUnityGLTF ? "GLB: OK" : "GLB: Missing", gltfStatusStyle, GUILayout.Width(70));
+
+            // FBX Exporter status
+            bool hasFBXExporter = RetargetApplianceExporter.IsFBXExporterAvailable();
+            var fbxStatusStyle = new GUIStyle(EditorStyles.miniLabel);
+            fbxStatusStyle.normal.textColor = hasFBXExporter ? Color.green : Color.red;
+            EditorGUILayout.LabelField(hasFBXExporter ? "FBX: OK" : "FBX: Missing", fbxStatusStyle, GUILayout.Width(70));
+
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(5);
@@ -224,7 +232,7 @@ namespace RetargetAppliance
 
         private void DrawSettingsSection()
         {
-            _showSettingsFoldout = EditorGUILayout.Foldout(_showSettingsFoldout, "Bake Settings", true);
+            _showSettingsFoldout = EditorGUILayout.Foldout(_showSettingsFoldout, "Bake & Export Settings", true);
 
             if (_showSettingsFoldout)
             {
@@ -239,6 +247,27 @@ namespace RetargetAppliance
                 _exportScale = EditorGUILayout.FloatField("Export Scale", _exportScale);
                 if (_exportScale <= 0)
                     _exportScale = 1f;
+
+                EditorGUILayout.Space(5);
+
+                // Export format selection
+                _exportFormat = (RetargetApplianceExporter.ExportFormat)EditorGUILayout.EnumPopup("Export Format", _exportFormat);
+
+                // Show warnings for missing exporters based on selection
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                {
+                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                    {
+                        EditorGUILayout.HelpBox("UnityGLTF not installed. GLB export will fail.", MessageType.Warning);
+                    }
+                }
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                {
+                    if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                    {
+                        EditorGUILayout.HelpBox("FBX Exporter not installed. FBX export will fail.", MessageType.Warning);
+                    }
+                }
 
                 EditorGUI.indentLevel--;
             }
@@ -281,30 +310,62 @@ namespace RetargetAppliance
             var mainButtonStyle = new GUIStyle(GUI.skin.button);
             mainButtonStyle.fontStyle = FontStyle.Bold;
 
-            if (GUILayout.Button("Bake + Export GLB for ALL Targets", mainButtonStyle, GUILayout.Height(40)))
+            string buttonLabel = GetExportButtonLabel();
+            if (GUILayout.Button(buttonLabel, mainButtonStyle, GUILayout.Height(40)))
             {
-                if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                // Check exporter availability based on selected format
+                bool canProceed = true;
+                string missingMessage = "";
+
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                {
+                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                    {
+                        missingMessage += "UnityGLTF is required for GLB export but is not installed.\n\n";
+                        canProceed = false;
+                    }
+                }
+
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                {
+                    if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                    {
+                        missingMessage += "FBX Exporter package is required for FBX export but is not installed.\n\n";
+                        canProceed = false;
+                    }
+                }
+
+                if (!canProceed)
                 {
                     bool showInstructions = EditorUtility.DisplayDialog(
-                        "UnityGLTF Required",
-                        "UnityGLTF is required for GLB export but is not installed.\n\nWould you like to see installation instructions?",
+                        "Missing Dependencies",
+                        missingMessage + "Would you like to see installation instructions?",
                         "Show Instructions", "Cancel");
 
                     if (showInstructions)
                     {
-                        EditorUtility.DisplayDialog(
-                            "UnityGLTF Installation",
-                            RetargetApplianceExporter.GetUnityGLTFInstallInstructions(),
-                            "OK");
+                        string instructions = "";
+                        if (!RetargetApplianceExporter.IsUnityGLTFAvailable() &&
+                            (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
+                        {
+                            instructions += RetargetApplianceExporter.GetUnityGLTFInstallInstructions() + "\n\n---\n\n";
+                        }
+                        if (!RetargetApplianceExporter.IsFBXExporterAvailable() &&
+                            (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
+                        {
+                            instructions += RetargetApplianceExporter.GetFBXExporterInstallInstructions();
+                        }
+                        EditorUtility.DisplayDialog("Installation Instructions", instructions, "OK");
                     }
                     return;
                 }
 
+                string exportFormatText = _exportFormat == RetargetApplianceExporter.ExportFormat.Both ? "GLB and FBX" : _exportFormat.ToString();
                 if (EditorUtility.DisplayDialog(
                     "Bake and Export",
                     $"This will:\n" +
                     $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
-                    $"- Export each target as GLB\n\n" +
+                    $"- Export each target as {exportFormatText}\n\n" +
                     $"Continue?",
                     "Yes", "Cancel"))
                 {
@@ -329,6 +390,20 @@ namespace RetargetAppliance
                 EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputExportPath);
             }
             EditorGUILayout.EndHorizontal();
+        }
+
+        private string GetExportButtonLabel()
+        {
+            switch (_exportFormat)
+            {
+                case RetargetApplianceExporter.ExportFormat.GLB:
+                    return "Bake + Export GLB for ALL Targets";
+                case RetargetApplianceExporter.ExportFormat.FBX:
+                    return "Bake + Export FBX for ALL Targets";
+                case RetargetApplianceExporter.ExportFormat.Both:
+                default:
+                    return "Bake + Export GLB/FBX for ALL Targets";
+            }
         }
 
         private void PerformValidation()
@@ -397,15 +472,32 @@ namespace RetargetAppliance
                 }
             }
 
-            // Check UnityGLTF
-            if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+            // Check UnityGLTF (for GLB export)
+            if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
             {
-                messages.Add("WARNING: UnityGLTF not installed. Export will fail without it.");
-                hasWarnings = true;
+                if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                {
+                    messages.Add("WARNING: UnityGLTF not installed. GLB export will fail.");
+                    hasWarnings = true;
+                }
+                else
+                {
+                    messages.Add("UnityGLTF: Installed and ready for GLB export");
+                }
             }
-            else
+
+            // Check FBX Exporter (for FBX export)
+            if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
             {
-                messages.Add("UnityGLTF: Installed and ready");
+                if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                {
+                    messages.Add("WARNING: FBX Exporter not installed. FBX export will fail.");
+                    hasWarnings = true;
+                }
+                else
+                {
+                    messages.Add("FBX Exporter: Installed and ready for FBX export");
+                }
             }
 
             // Set validation state
@@ -457,8 +549,14 @@ namespace RetargetAppliance
                 };
 
                 int totalTargets = _vrmTargets.Count;
-                int successCount = 0;
-                int failCount = 0;
+                int glbSuccessCount = 0;
+                int glbFailCount = 0;
+                int fbxSuccessCount = 0;
+                int fbxFailCount = 0;
+                int bakeFailCount = 0;
+
+                bool exportGLB = _exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
+                bool exportFBX = _exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
 
                 // Process each target
                 for (int i = 0; i < _vrmTargets.Count; i++)
@@ -480,7 +578,7 @@ namespace RetargetAppliance
 
                     if (!string.IsNullOrEmpty(bakeResult.Error))
                     {
-                        failCount++;
+                        bakeFailCount++;
                         continue;
                     }
 
@@ -488,27 +586,53 @@ namespace RetargetAppliance
                     {
                         RetargetApplianceUtil.LogWarning($"No clips were baked for '{targetName}'");
                         CleanupTarget(bakeResult);
-                        failCount++;
+                        bakeFailCount++;
                         continue;
                     }
 
                     // Export
                     var bakedClips = RetargetApplianceBaker.GetBakedClips(bakeResult);
-                    var exportResult = RetargetApplianceExporter.ExportAsGLB(
-                        bakeResult.TargetInstance,
-                        targetName,
-                        bakedClips,
-                        settings);
 
-                    if (exportResult.Success)
+                    // Export GLB if enabled
+                    if (exportGLB)
                     {
-                        successCount++;
-                        RetargetApplianceUtil.LogInfo($"Successfully exported: {exportResult.ExportPath}");
+                        var glbResult = RetargetApplianceExporter.ExportAsGLB(
+                            bakeResult.TargetInstance,
+                            targetName,
+                            bakedClips,
+                            settings);
+
+                        if (glbResult.Success)
+                        {
+                            glbSuccessCount++;
+                            RetargetApplianceUtil.LogInfo($"GLB exported: {glbResult.ExportPath}");
+                        }
+                        else
+                        {
+                            glbFailCount++;
+                            RetargetApplianceUtil.LogError($"GLB export failed for '{targetName}': {glbResult.Error}");
+                        }
                     }
-                    else
+
+                    // Export FBX if enabled
+                    if (exportFBX)
                     {
-                        failCount++;
-                        RetargetApplianceUtil.LogError($"Export failed for '{targetName}': {exportResult.Error}");
+                        var fbxResult = RetargetApplianceExporter.ExportAsFBX(
+                            bakeResult.TargetInstance,
+                            targetName,
+                            bakedClips,
+                            settings);
+
+                        if (fbxResult.Success)
+                        {
+                            fbxSuccessCount++;
+                            RetargetApplianceUtil.LogInfo($"FBX exported: {fbxResult.ExportPath}");
+                        }
+                        else
+                        {
+                            fbxFailCount++;
+                            RetargetApplianceUtil.LogError($"FBX export failed for '{targetName}': {fbxResult.Error}");
+                        }
                     }
 
                     // Cleanup instantiated target
@@ -519,13 +643,30 @@ namespace RetargetAppliance
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
-                // Show summary
-                string summary = $"Bake and Export Complete!\n\n" +
-                                $"Successful: {successCount}\n" +
-                                $"Failed: {failCount}\n\n" +
-                                $"Baked animations saved to:\n{RetargetApplianceUtil.OutputPrefabsPath}\n\n" +
-                                $"GLB exports saved to:\n{RetargetApplianceUtil.OutputExportPath}";
+                // Build summary
+                var summaryLines = new List<string>();
+                summaryLines.Add("Bake and Export Complete!\n");
 
+                if (bakeFailCount > 0)
+                {
+                    summaryLines.Add($"Bake failures: {bakeFailCount}");
+                }
+
+                if (exportGLB)
+                {
+                    summaryLines.Add($"GLB: {glbSuccessCount} successful, {glbFailCount} failed");
+                    summaryLines.Add($"  -> {RetargetApplianceUtil.OutputExportPath}/<Target>.glb");
+                }
+
+                if (exportFBX)
+                {
+                    summaryLines.Add($"FBX: {fbxSuccessCount} successful, {fbxFailCount} failed");
+                    summaryLines.Add($"  -> {RetargetApplianceUtil.OutputExportPath}/<Target>.fbx");
+                }
+
+                summaryLines.Add($"\nBaked animations: {RetargetApplianceUtil.OutputPrefabsPath}");
+
+                string summary = string.Join("\n", summaryLines);
                 EditorUtility.DisplayDialog("Complete", summary, "OK");
 
                 RetargetApplianceUtil.LogInfo(summary.Replace("\n\n", " | ").Replace("\n", " "));
