@@ -231,11 +231,21 @@ namespace RetargetAppliance
                         curves.PosY.AddKey(time, t.localPosition.y * settings.ExportScale);
                         curves.PosZ.AddKey(time, t.localPosition.z * settings.ExportScale);
 
-                        // Record local rotation
-                        curves.RotX.AddKey(time, t.localRotation.x);
-                        curves.RotY.AddKey(time, t.localRotation.y);
-                        curves.RotZ.AddKey(time, t.localRotation.z);
-                        curves.RotW.AddKey(time, t.localRotation.w);
+                        // Record local rotation as Euler angles (degrees) for FBX export compatibility
+                        // Using localEulerAngles with continuity handling to prevent angle discontinuities
+                        Vector3 euler = t.localRotation.eulerAngles;
+
+                        // Handle angle continuity to prevent jumps (e.g., 359 -> 1)
+                        if (curves.HasPrevEuler)
+                        {
+                            euler = MakeEulerContinuous(curves.PrevEuler, euler);
+                        }
+                        curves.PrevEuler = euler;
+                        curves.HasPrevEuler = true;
+
+                        curves.EulerX.AddKey(time, euler.x);
+                        curves.EulerY.AddKey(time, euler.y);
+                        curves.EulerZ.AddKey(time, euler.z);
 
                         // Note: Scale curves intentionally omitted to avoid FBX export warnings
                         // ("no mapping from Unity 'localScale.z' to fbx property")
@@ -266,7 +276,7 @@ namespace RetargetAppliance
                         var initial = initialStates[t];
 
                         if (!IsAnimated(curves.PosX) && !IsAnimated(curves.PosY) && !IsAnimated(curves.PosZ) &&
-                            !IsAnimated(curves.RotX) && !IsAnimated(curves.RotY) && !IsAnimated(curves.RotZ) && !IsAnimated(curves.RotW))
+                            !IsAnimated(curves.EulerX) && !IsAnimated(curves.EulerY) && !IsAnimated(curves.EulerZ))
                         {
                             // Transform never changes, skip it
                             continue;
@@ -278,17 +288,17 @@ namespace RetargetAppliance
                     SetCurve(result.BakedClip, path, "localPosition.y", curves.PosY);
                     SetCurve(result.BakedClip, path, "localPosition.z", curves.PosZ);
 
-                    // Rotation (using localRotation quaternion)
-                    SetCurve(result.BakedClip, path, "localRotation.x", curves.RotX);
-                    SetCurve(result.BakedClip, path, "localRotation.y", curves.RotY);
-                    SetCurve(result.BakedClip, path, "localRotation.z", curves.RotZ);
-                    SetCurve(result.BakedClip, path, "localRotation.w", curves.RotW);
+                    // Rotation using Euler angles (degrees) for FBX export compatibility
+                    // localEulerAnglesRaw is the property name Unity uses internally for Euler curves
+                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.x", curves.EulerX);
+                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.y", curves.EulerY);
+                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.z", curves.EulerZ);
 
                     // Note: Scale curves not exported - Unity FBX Exporter has no mapping for localScale
                 }
 
-                // Ensure settings are correct
-                result.BakedClip.EnsureQuaternionContinuity();
+                // Note: EnsureQuaternionContinuity() not needed since we use Euler curves
+                // Euler continuity is handled during sampling via MakeEulerContinuous()
 
                 // Save the baked clip as an asset
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
@@ -312,6 +322,42 @@ namespace RetargetAppliance
         {
             var binding = EditorCurveBinding.FloatCurve(path, typeof(Transform), propertyName);
             AnimationUtility.SetEditorCurve(clip, binding, curve);
+        }
+
+        /// <summary>
+        /// Makes Euler angles continuous by adjusting for angle wraparound.
+        /// Prevents sudden jumps from e.g. 359° to 1° by using the shortest path.
+        /// </summary>
+        private static Vector3 MakeEulerContinuous(Vector3 prev, Vector3 current)
+        {
+            return new Vector3(
+                MakeAngleContinuous(prev.x, current.x),
+                MakeAngleContinuous(prev.y, current.y),
+                MakeAngleContinuous(prev.z, current.z)
+            );
+        }
+
+        /// <summary>
+        /// Makes a single angle continuous relative to a previous angle.
+        /// </summary>
+        private static float MakeAngleContinuous(float prev, float current)
+        {
+            float delta = current - prev;
+
+            // If the delta is more than 180°, we wrapped around
+            // Adjust to take the shorter path
+            while (delta > 180f)
+            {
+                current -= 360f;
+                delta = current - prev;
+            }
+            while (delta < -180f)
+            {
+                current += 360f;
+                delta = current - prev;
+            }
+
+            return current;
         }
 
         /// <summary>
@@ -413,16 +459,20 @@ namespace RetargetAppliance
         /// <summary>
         /// Helper class to store animation curves for a transform.
         /// Note: Scale curves intentionally omitted - Unity FBX Exporter has no mapping for localScale.
+        /// Rotation uses Euler angles (degrees) instead of quaternions for FBX export compatibility.
         /// </summary>
         private class TransformCurves
         {
             public AnimationCurve PosX = new AnimationCurve();
             public AnimationCurve PosY = new AnimationCurve();
             public AnimationCurve PosZ = new AnimationCurve();
-            public AnimationCurve RotX = new AnimationCurve();
-            public AnimationCurve RotY = new AnimationCurve();
-            public AnimationCurve RotZ = new AnimationCurve();
-            public AnimationCurve RotW = new AnimationCurve();
+            // Euler angles in degrees (not quaternion components)
+            public AnimationCurve EulerX = new AnimationCurve();
+            public AnimationCurve EulerY = new AnimationCurve();
+            public AnimationCurve EulerZ = new AnimationCurve();
+            // Track previous euler to handle angle continuity
+            public Vector3 PrevEuler = Vector3.zero;
+            public bool HasPrevEuler = false;
         }
 
         /// <summary>
