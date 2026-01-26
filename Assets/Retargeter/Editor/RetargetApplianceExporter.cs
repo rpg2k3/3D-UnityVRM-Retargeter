@@ -230,6 +230,14 @@ After installation, restart Unity and try again.";
                 TargetName = targetName
             };
 
+            // Validate target
+            if (targetInstance == null)
+            {
+                result.Error = "Target GameObject is null.";
+                RetargetApplianceUtil.LogError($"[RetargetAppliance] {result.Error}");
+                return result;
+            }
+
             // Check if FBX Exporter is available
             if (!IsFBXExporterAvailable())
             {
@@ -237,6 +245,12 @@ After installation, restart Unity and try again.";
                 RetargetApplianceUtil.LogError(result.Error);
                 return result;
             }
+
+            // Track state for cleanup
+            bool animationWasAdded = false;
+            AnimationClip originalDefaultClip = null;
+            List<AnimationClip> tempClips = new List<AnimationClip>();
+            Animation animation = null;
 
             try
             {
@@ -250,8 +264,24 @@ After installation, restart Unity and try again.";
                     Directory.CreateDirectory(exportFolder);
                 }
 
-                // Prepare target for FBX export with animations
-                PrepareTargetForFBXExport(targetInstance, bakedClips);
+                // Ensure Animation component exists (required for FBX Exporter to find animations)
+                animation = EnsureLegacyAnimation(targetInstance, out animationWasAdded);
+
+                // Store original default clip if Animation existed before
+                if (!animationWasAdded && animation != null)
+                {
+                    originalDefaultClip = animation.clip;
+                }
+
+                // Attach baked clips if available
+                if (bakedClips != null && bakedClips.Count > 0)
+                {
+                    tempClips = AttachClipsForFBXExport(animation, bakedClips, settings);
+                }
+                else
+                {
+                    RetargetApplianceUtil.LogWarning("[RetargetAppliance] No animation clips provided; FBX will export mesh+skeleton only.");
+                }
 
                 // Build the output path
                 string fbxFileName = $"{targetName}.fbx";
@@ -264,12 +294,12 @@ After installation, restart Unity and try again.";
                 if (exportSuccess)
                 {
                     result.Success = true;
-                    RetargetApplianceUtil.LogInfo($"Exported FBX: {result.ExportPath}");
+                    int clipCount = tempClips.Count;
+                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] FBX export completed with embedded takes: {result.ExportPath}");
 
-                    // Note about animations
-                    if (bakedClips != null && bakedClips.Count > 0)
+                    if (clipCount > 0)
                     {
-                        RetargetApplianceUtil.LogInfo($"FBX export includes {bakedClips.Count} animation clip(s) via Animation component.");
+                        RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Exported {clipCount} animation take(s) to FBX.");
                     }
                 }
                 else
@@ -282,11 +312,135 @@ After installation, restart Unity and try again.";
             catch (Exception ex)
             {
                 result.Error = ex.Message;
-                RetargetApplianceUtil.LogError($"FBX export failed: {ex.Message}");
+                RetargetApplianceUtil.LogError($"[RetargetAppliance] FBX export failed: {ex.Message}");
                 Debug.LogException(ex);
+            }
+            finally
+            {
+                // Cleanup: restore original state so scene isn't polluted
+                CleanupAfterFBXExport(targetInstance, animationWasAdded, originalDefaultClip, tempClips);
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Ensures a legacy Animation component exists on the root GameObject.
+        /// If not present, adds one. Returns the Animation component.
+        /// </summary>
+        /// <param name="root">The root GameObject to check/modify.</param>
+        /// <param name="added">True if a new Animation component was added, false if it already existed.</param>
+        /// <returns>The Animation component (never null if root is valid).</returns>
+        /// <exception cref="ArgumentNullException">Thrown if root is null.</exception>
+        private static Animation EnsureLegacyAnimation(GameObject root, out bool added)
+        {
+            if (root == null)
+            {
+                throw new ArgumentNullException(nameof(root), "[RetargetAppliance] Cannot ensure Animation on null GameObject.");
+            }
+
+            added = false;
+            Animation animation = root.GetComponent<Animation>();
+
+            if (animation == null)
+            {
+                animation = root.AddComponent<Animation>();
+                added = true;
+            }
+
+            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Ensured legacy Animation on '{root.name}' (added={added})");
+
+            return animation;
+        }
+
+        /// <summary>
+        /// Attaches baked animation clips to an Animation component for FBX export.
+        /// Returns the list of temporary clip copies for cleanup.
+        /// </summary>
+        private static List<AnimationClip> AttachClipsForFBXExport(
+            Animation animation,
+            List<AnimationClip> clips,
+            RetargetApplianceBaker.BakeSettings settings)
+        {
+            var tempClips = new List<AnimationClip>();
+
+            if (animation == null)
+            {
+                RetargetApplianceUtil.LogError("[RetargetAppliance] Cannot attach clips: Animation component is null.");
+                return tempClips;
+            }
+
+            if (clips == null || clips.Count == 0)
+            {
+                return tempClips;
+            }
+
+            var clipNames = new List<string>();
+            var usedNames = new HashSet<string>();
+            AnimationClip firstClip = null;
+
+            foreach (var clip in clips)
+            {
+                if (clip == null)
+                {
+                    continue;
+                }
+
+                // Create a copy and set to Legacy mode (required for Animation component)
+                var clipCopy = UnityEngine.Object.Instantiate(clip);
+                clipCopy.legacy = true;
+
+                // Ensure unique name
+                string baseName = clip.name;
+                string uniqueName = baseName;
+                int suffix = 1;
+                while (usedNames.Contains(uniqueName))
+                {
+                    uniqueName = $"{baseName}_{suffix}";
+                    suffix++;
+                }
+                clipCopy.name = uniqueName;
+                usedNames.Add(uniqueName);
+
+                // Set wrap mode based on animation name patterns
+                if (settings != null && IsLoopableAnimation(clip.name))
+                {
+                    clipCopy.wrapMode = WrapMode.Loop;
+                }
+                else
+                {
+                    clipCopy.wrapMode = WrapMode.Default;
+                }
+
+                // Add clip to Animation component
+                animation.AddClip(clipCopy, uniqueName);
+                clipNames.Add(uniqueName);
+                tempClips.Add(clipCopy);
+
+                // Track first clip for default
+                if (firstClip == null)
+                {
+                    firstClip = clipCopy;
+                }
+            }
+
+            // Set first clip as default
+            if (firstClip != null)
+            {
+                animation.clip = firstClip;
+            }
+
+            // Configure playback settings
+            animation.playAutomatically = false;
+
+            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Attached {tempClips.Count} baked clips for FBX export.");
+
+            if (clipNames.Count > 0)
+            {
+                RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Animation takes: {string.Join(", ", clipNames)}");
+            }
+
+            return tempClips;
         }
 
         /// <summary>
@@ -331,52 +485,119 @@ After installation, restart Unity and try again.";
         }
 
         /// <summary>
-        /// Prepares a target GameObject for FBX export.
-        /// Attaches animation clips to a legacy Animation component for FBX Exporter to pick up.
+        /// Determines if an animation should loop based on its name.
+        /// Common looping animations: walk, run, idle, locomotion.
         /// </summary>
-        private static void PrepareTargetForFBXExport(GameObject target, List<AnimationClip> clips)
+        private static bool IsLoopableAnimation(string clipName)
         {
-            if (clips == null || clips.Count == 0)
+            if (string.IsNullOrEmpty(clipName))
+                return false;
+
+            string lowerName = clipName.ToLowerInvariant();
+
+            // Common looping animation patterns
+            return lowerName.Contains("walk") ||
+                   lowerName.Contains("run") ||
+                   lowerName.Contains("idle") ||
+                   lowerName.Contains("locomotion") ||
+                   lowerName.Contains("loop") ||
+                   lowerName.Contains("cycle");
+        }
+
+        /// <summary>
+        /// Cleans up temporary Animation component and clips after FBX export.
+        /// Restores the GameObject to its original state.
+        /// </summary>
+        /// <param name="target">The target GameObject.</param>
+        /// <param name="animationWasAdded">True if we added the Animation component (should be removed).</param>
+        /// <param name="originalDefaultClip">The original default clip to restore (if Animation existed before).</param>
+        /// <param name="tempClips">List of temporary clip copies to destroy.</param>
+        private static void CleanupAfterFBXExport(
+            GameObject target,
+            bool animationWasAdded,
+            AnimationClip originalDefaultClip,
+            List<AnimationClip> tempClips)
+        {
+            if (target == null)
             {
-                RetargetApplianceUtil.LogWarning("No animation clips to include in FBX export.");
+                // Target was destroyed, just clean up temp clips
+                DestroyTempClips(tempClips);
                 return;
             }
 
-            // FBX Exporter can export animations attached to Animation (legacy) component.
-            // Add or get the Animation component
-            var animation = target.GetComponent<Animation>();
-            if (animation == null)
+            try
             {
-                animation = target.AddComponent<Animation>();
+                Animation animation = target.GetComponent<Animation>();
+
+                if (animation != null)
+                {
+                    // Remove all temporary clips from the Animation component
+                    if (tempClips != null)
+                    {
+                        foreach (var tempClip in tempClips)
+                        {
+                            if (tempClip != null)
+                            {
+                                // Use try-catch for each clip removal in case one fails
+                                try
+                                {
+                                    animation.RemoveClip(tempClip);
+                                }
+                                catch (Exception)
+                                {
+                                    // Clip may already be removed or invalid, continue
+                                }
+                            }
+                        }
+                    }
+
+                    if (animationWasAdded)
+                    {
+                        // Remove the Animation component entirely since we added it
+                        UnityEngine.Object.DestroyImmediate(animation);
+                        RetargetApplianceUtil.LogInfo("[RetargetAppliance] Removed temporary Animation component after FBX export.");
+                    }
+                    else
+                    {
+                        // Restore original default clip if Animation existed before
+                        animation.clip = originalDefaultClip;
+                    }
+                }
+
+                // Destroy temp clip objects
+                DestroyTempClips(tempClips);
             }
+            catch (Exception ex)
+            {
+                RetargetApplianceUtil.LogWarning($"[RetargetAppliance] Cleanup after FBX export encountered an issue: {ex.Message}");
 
-            // Clear existing clips
-            animation.clip = null;
+                // Still try to clean up temp clips even if something else failed
+                DestroyTempClips(tempClips);
+            }
+        }
 
-            int addedCount = 0;
+        /// <summary>
+        /// Destroys temporary animation clip copies.
+        /// </summary>
+        private static void DestroyTempClips(List<AnimationClip> tempClips)
+        {
+            if (tempClips == null)
+                return;
 
-            foreach (var clip in clips)
+            foreach (var clip in tempClips)
             {
                 if (clip != null)
                 {
-                    // Create a copy and set to Legacy mode
-                    var clipCopy = UnityEngine.Object.Instantiate(clip);
-                    clipCopy.legacy = true;
-                    clipCopy.name = clip.name;
-
-                    animation.AddClip(clipCopy, clip.name);
-
-                    // Set first clip as default
-                    if (animation.clip == null)
+                    try
                     {
-                        animation.clip = clipCopy;
+                        UnityEngine.Object.DestroyImmediate(clip);
                     }
-
-                    addedCount++;
+                    catch (Exception)
+                    {
+                        // Clip may already be destroyed, continue
+                    }
                 }
             }
-
-            RetargetApplianceUtil.LogInfo($"Prepared {addedCount} animation clip(s) for FBX export on '{target.name}'");
         }
 
         /// <summary>
