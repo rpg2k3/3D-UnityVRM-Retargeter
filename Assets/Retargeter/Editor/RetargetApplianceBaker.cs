@@ -246,7 +246,12 @@ namespace RetargetAppliance
                                         settings.VrmCorrections.EnableCorrections &&
                                         settings.VrmCorrections.HasAnyCorrection();
 
+                bool applyToeStabilization = settings.VrmCorrections != null &&
+                                             settings.VrmCorrections.EnableToeStabilization &&
+                                             (settings.VrmCorrections.StabilizeRightToe || settings.VrmCorrections.StabilizeLeftToe);
+
                 FootCorrectionData correctionData = null;
+                ToeStabilizationData toeStabilizationData = null;
                 string logPrefix = $"[RetargetAppliance] [{targetName}]";
 
                 // Sample each frame
@@ -260,7 +265,15 @@ namespace RetargetAppliance
                     clipPlayable.SetTime(time);
                     graph.Evaluate();
 
-                    // STEP 2: Apply VRM corrections AFTER sampling, BEFORE recording
+                    // STEP 2: Capture toe neutral poses BEFORE foot corrections (first frame only)
+                    // This captures the animation's natural toe pose at t=0
+                    if (applyToeStabilization && toeStabilizationData == null)
+                    {
+                        toeStabilizationData = RetargetApplianceVrmCorrections.CaptureToeNeutralPoses(
+                            animator, settings.VrmCorrections, logPrefix);
+                    }
+
+                    // STEP 3: Apply VRM foot corrections AFTER sampling, BEFORE recording
                     if (applyCorrections)
                     {
                         if (settings.VrmCorrections.AutoFixFootDirection)
@@ -282,7 +295,16 @@ namespace RetargetAppliance
                         }
                     }
 
-                    // STEP 3: Record all transform states (now with corrections applied)
+                    // STEP 4: Apply toe stabilization AFTER foot corrections, BEFORE recording
+                    if (applyToeStabilization && toeStabilizationData != null)
+                    {
+                        // Debug output on first frame only when debug enabled
+                        bool debugThisFrame = frame == 0 && settings.VrmCorrections.DebugPrintAlignment;
+                        RetargetApplianceVrmCorrections.ApplyToeStabilization(
+                            animator, toeStabilizationData, settings.VrmCorrections, debugThisFrame, logPrefix);
+                    }
+
+                    // STEP 5: Record all transform states (now with corrections applied)
                     foreach (var t in transforms)
                     {
                         // Skip root if not including root motion

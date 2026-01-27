@@ -26,6 +26,18 @@ namespace RetargetAppliance
     }
 
     /// <summary>
+    /// Toe stabilization mode for VRM rigs.
+    /// </summary>
+    public enum ToeStabilizationMode
+    {
+        /// <summary>Dampen toe rotation by blending towards neutral pose.</summary>
+        DampenRotation,
+
+        /// <summary>Make toe follow foot rotation (copy foot yaw to toe).</summary>
+        ToeFollowsFoot
+    }
+
+    /// <summary>
     /// Serializable settings for VRM bone corrections with full XYZ Euler support.
     /// </summary>
     [Serializable]
@@ -61,6 +73,23 @@ namespace RetargetAppliance
         /// <summary>Right toes Euler offset in degrees (X, Y, Z) - manual mode.</summary>
         public Vector3 RightToesOffset = Vector3.zero;
 
+        // === Toe Stabilization Settings ===
+
+        /// <summary>Enable toe stabilization to fix "toe overdrives foot" look.</summary>
+        public bool EnableToeStabilization = true;
+
+        /// <summary>Toe stabilization mode.</summary>
+        public ToeStabilizationMode ToeStabilizationMode = ToeStabilizationMode.DampenRotation;
+
+        /// <summary>Toe rotation strength (0 = neutral/no rotation, 1 = original animation).</summary>
+        public float ToeRotationStrength = 0.25f;
+
+        /// <summary>Apply toe stabilization to right toe.</summary>
+        public bool StabilizeRightToe = true;
+
+        /// <summary>Apply toe stabilization to left toe.</summary>
+        public bool StabilizeLeftToe = false;
+
         /// <summary>Creates default settings with auto-fix enabled.</summary>
         public VrmCorrectionSettings()
         {
@@ -81,7 +110,13 @@ namespace RetargetAppliance
                 LeftFootOffset = this.LeftFootOffset,
                 RightFootOffset = this.RightFootOffset,
                 LeftToesOffset = this.LeftToesOffset,
-                RightToesOffset = this.RightToesOffset
+                RightToesOffset = this.RightToesOffset,
+                // Toe stabilization settings
+                EnableToeStabilization = this.EnableToeStabilization,
+                ToeStabilizationMode = this.ToeStabilizationMode,
+                ToeRotationStrength = this.ToeRotationStrength,
+                StabilizeRightToe = this.StabilizeRightToe,
+                StabilizeLeftToe = this.StabilizeLeftToe
             };
         }
 
@@ -161,6 +196,26 @@ namespace RetargetAppliance
         public float LeftFootYaw = 0f;
         public float RightFootDot = 0f;
         public float LeftFootDot = 0f;
+    }
+
+    /// <summary>
+    /// Holds neutral toe poses for toe stabilization.
+    /// Captured once at the start of baking.
+    /// </summary>
+    public class ToeStabilizationData
+    {
+        public bool IsCaptured = false;
+
+        // Neutral local rotations (from bind/rest pose at time=0)
+        public Quaternion RightToeNeutral = Quaternion.identity;
+        public Quaternion LeftToeNeutral = Quaternion.identity;
+
+        // Foot local rotations for "toe follows foot" mode
+        public Quaternion RightFootNeutral = Quaternion.identity;
+        public Quaternion LeftFootNeutral = Quaternion.identity;
+
+        public bool HasRightToes = false;
+        public bool HasLeftToes = false;
     }
 
     /// <summary>
@@ -429,6 +484,177 @@ namespace RetargetAppliance
             }
 
             Debug.Log($"[RetargetAppliance] [{targetName}] === End Debug ===");
+        }
+
+        /// <summary>
+        /// Captures neutral toe poses for toe stabilization.
+        /// Call this AFTER graph.Evaluate() on the first frame.
+        /// </summary>
+        public static ToeStabilizationData CaptureToeNeutralPoses(Animator animator, VrmCorrectionSettings settings, string logPrefix = null)
+        {
+            var data = new ToeStabilizationData();
+
+            if (animator == null || !animator.isHuman)
+            {
+                data.IsCaptured = true;
+                return data;
+            }
+
+            Transform rightToes = animator.GetBoneTransform(HumanBodyBones.RightToes);
+            Transform leftToes = animator.GetBoneTransform(HumanBodyBones.LeftToes);
+            Transform rightFoot = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+            Transform leftFoot = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+
+            data.HasRightToes = rightToes != null;
+            data.HasLeftToes = leftToes != null;
+
+            // Capture neutral rotations
+            if (rightToes != null)
+            {
+                data.RightToeNeutral = rightToes.localRotation;
+            }
+            if (leftToes != null)
+            {
+                data.LeftToeNeutral = leftToes.localRotation;
+            }
+            if (rightFoot != null)
+            {
+                data.RightFootNeutral = rightFoot.localRotation;
+            }
+            if (leftFoot != null)
+            {
+                data.LeftFootNeutral = leftFoot.localRotation;
+            }
+
+            if (settings.DebugPrintAlignment)
+            {
+                string prefix = string.IsNullOrEmpty(logPrefix) ? "[RetargetAppliance]" : logPrefix;
+                Debug.Log($"{prefix} === Toe Stabilization Data Captured ===");
+                Debug.Log($"{prefix} HasRightToes: {data.HasRightToes}, HasLeftToes: {data.HasLeftToes}");
+                if (data.HasRightToes)
+                    Debug.Log($"{prefix} RightToeNeutral: {data.RightToeNeutral.eulerAngles:F1}");
+                if (data.HasLeftToes)
+                    Debug.Log($"{prefix} LeftToeNeutral: {data.LeftToeNeutral.eulerAngles:F1}");
+                Debug.Log($"{prefix} =====================================");
+            }
+
+            data.IsCaptured = true;
+            return data;
+        }
+
+        /// <summary>
+        /// Applies toe stabilization to reduce "toe overdrives foot" effect.
+        /// Call this AFTER foot corrections and BEFORE recording curves.
+        /// </summary>
+        public static void ApplyToeStabilization(
+            Animator animator,
+            ToeStabilizationData toeData,
+            VrmCorrectionSettings settings,
+            bool debugThisFrame = false,
+            string logPrefix = null)
+        {
+            if (animator == null || !animator.isHuman || toeData == null || !toeData.IsCaptured)
+                return;
+
+            if (!settings.EnableToeStabilization)
+                return;
+
+            float strength = Mathf.Clamp01(settings.ToeRotationStrength);
+            string prefix = string.IsNullOrEmpty(logPrefix) ? "[RetargetAppliance]" : logPrefix;
+
+            // Apply to right toe
+            if (settings.StabilizeRightToe && toeData.HasRightToes)
+            {
+                Transform rightToes = animator.GetBoneTransform(HumanBodyBones.RightToes);
+                Transform rightFoot = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+
+                if (rightToes != null)
+                {
+                    Quaternion originalRot = rightToes.localRotation;
+                    Quaternion newRot;
+
+                    if (settings.ToeStabilizationMode == ToeStabilizationMode.DampenRotation)
+                    {
+                        // Mode A: Dampen - blend between neutral and animated
+                        newRot = Quaternion.Slerp(toeData.RightToeNeutral, originalRot, strength);
+                    }
+                    else // ToeFollowsFoot
+                    {
+                        // Mode B: Toe follows foot
+                        // Copy foot's yaw to toe, relative to neutral
+                        if (rightFoot != null)
+                        {
+                            Quaternion footDelta = Quaternion.Inverse(toeData.RightFootNeutral) * rightFoot.localRotation;
+                            float footYaw = ExtractYaw(footDelta);
+                            Quaternion yawOnly = Quaternion.Euler(0f, footYaw, 0f);
+                            Quaternion targetRot = yawOnly * toeData.RightToeNeutral;
+                            newRot = Quaternion.Slerp(toeData.RightToeNeutral, targetRot, strength);
+                        }
+                        else
+                        {
+                            newRot = toeData.RightToeNeutral;
+                        }
+                    }
+
+                    rightToes.localRotation = newRot;
+
+                    if (debugThisFrame)
+                    {
+                        Debug.Log($"{prefix} RightToe: original={originalRot.eulerAngles:F1}, new={newRot.eulerAngles:F1}, strength={strength:F2}");
+                    }
+                }
+            }
+
+            // Apply to left toe
+            if (settings.StabilizeLeftToe && toeData.HasLeftToes)
+            {
+                Transform leftToes = animator.GetBoneTransform(HumanBodyBones.LeftToes);
+                Transform leftFoot = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+
+                if (leftToes != null)
+                {
+                    Quaternion originalRot = leftToes.localRotation;
+                    Quaternion newRot;
+
+                    if (settings.ToeStabilizationMode == ToeStabilizationMode.DampenRotation)
+                    {
+                        // Mode A: Dampen - blend between neutral and animated
+                        newRot = Quaternion.Slerp(toeData.LeftToeNeutral, originalRot, strength);
+                    }
+                    else // ToeFollowsFoot
+                    {
+                        // Mode B: Toe follows foot
+                        if (leftFoot != null)
+                        {
+                            Quaternion footDelta = Quaternion.Inverse(toeData.LeftFootNeutral) * leftFoot.localRotation;
+                            float footYaw = ExtractYaw(footDelta);
+                            Quaternion yawOnly = Quaternion.Euler(0f, footYaw, 0f);
+                            Quaternion targetRot = yawOnly * toeData.LeftToeNeutral;
+                            newRot = Quaternion.Slerp(toeData.LeftToeNeutral, targetRot, strength);
+                        }
+                        else
+                        {
+                            newRot = toeData.LeftToeNeutral;
+                        }
+                    }
+
+                    leftToes.localRotation = newRot;
+
+                    if (debugThisFrame)
+                    {
+                        Debug.Log($"{prefix} LeftToe: original={originalRot.eulerAngles:F1}, new={newRot.eulerAngles:F1}, strength={strength:F2}");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Extracts yaw (Y-axis rotation) from a quaternion in degrees.
+        /// </summary>
+        private static float ExtractYaw(Quaternion q)
+        {
+            Vector3 euler = q.eulerAngles;
+            return euler.y;
         }
 
         private static void LogWarning(string prefix, string message)

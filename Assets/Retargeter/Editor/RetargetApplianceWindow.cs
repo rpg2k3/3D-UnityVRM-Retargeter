@@ -31,6 +31,13 @@ namespace RetargetAppliance
         private bool _correctToes = true;
         private bool _debugPrintAlignment = false;
 
+        // Toe Stabilization Settings
+        private bool _enableToeStabilization = true;
+        private ToeStabilizationMode _toeStabilizationMode = ToeStabilizationMode.DampenRotation;
+        private float _toeRotationStrength = 0.25f;
+        private bool _stabilizeRightToe = true;
+        private bool _stabilizeLeftToe = false;
+
         // Manual offset settings (advanced)
         private bool _showVrmAdvancedFoldout = false;
         private VrmCorrectionProfile _vrmCorrectionProfile = VrmCorrectionProfile.VRoidA_Y90;
@@ -325,6 +332,11 @@ namespace RetargetAppliance
                 // Debug toggle
                 _debugPrintAlignment = EditorGUILayout.Toggle("Debug: Print Alignment", _debugPrintAlignment);
 
+                EditorGUILayout.Space(10);
+
+                // Toe Stabilization Section
+                DrawToeStabilizationSection();
+
                 EditorGUILayout.Space(5);
 
                 // Advanced/Manual foldout
@@ -421,6 +433,50 @@ namespace RetargetAppliance
             }
         }
 
+        private void DrawToeStabilizationSection()
+        {
+            EditorGUILayout.LabelField("Toe Stabilization", EditorStyles.boldLabel);
+
+            EditorGUI.indentLevel++;
+
+            _enableToeStabilization = EditorGUILayout.Toggle("Toe Stabilization", _enableToeStabilization);
+
+            if (_enableToeStabilization)
+            {
+                EditorGUILayout.HelpBox(
+                    "Fixes 'toe overdrives foot' look on VRM rigs by reducing or controlling toe rotation during baking.",
+                    MessageType.Info);
+
+                _toeStabilizationMode = (ToeStabilizationMode)EditorGUILayout.EnumPopup("Toe Mode", _toeStabilizationMode);
+
+                // Show mode description
+                string modeDescription = _toeStabilizationMode == ToeStabilizationMode.DampenRotation
+                    ? "Blends toe rotation towards neutral pose."
+                    : "Toe follows foot yaw rotation.";
+                EditorGUILayout.LabelField(modeDescription, EditorStyles.miniLabel);
+
+                EditorGUILayout.Space(3);
+
+                // Strength slider
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Toe Rotation Strength", GUILayout.Width(150));
+                _toeRotationStrength = EditorGUILayout.Slider(_toeRotationStrength, 0f, 1f);
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.LabelField("(0 = no toe rotation, 1 = original animation)", EditorStyles.miniLabel);
+
+                EditorGUILayout.Space(3);
+
+                // Apply to toggles
+                EditorGUILayout.LabelField("Apply To:", EditorStyles.miniBoldLabel);
+                EditorGUI.indentLevel++;
+                _stabilizeRightToe = EditorGUILayout.Toggle("Right Toe", _stabilizeRightToe);
+                _stabilizeLeftToe = EditorGUILayout.Toggle("Left Toe", _stabilizeLeftToe);
+                EditorGUI.indentLevel--;
+            }
+
+            EditorGUI.indentLevel--;
+        }
+
         private VrmCorrectionSettings CreateVrmCorrectionSettings()
         {
             return new VrmCorrectionSettings
@@ -434,7 +490,13 @@ namespace RetargetAppliance
                 LeftFootOffset = _leftFootOffset,
                 RightFootOffset = _rightFootOffset,
                 LeftToesOffset = _leftToesOffset,
-                RightToesOffset = _rightToesOffset
+                RightToesOffset = _rightToesOffset,
+                // Toe stabilization settings
+                EnableToeStabilization = _enableToeStabilization,
+                ToeStabilizationMode = _toeStabilizationMode,
+                ToeRotationStrength = _toeRotationStrength,
+                StabilizeRightToe = _stabilizeRightToe,
+                StabilizeLeftToe = _stabilizeLeftToe
             };
         }
 
