@@ -68,6 +68,73 @@ Assets/
 | **Include Root Motion** | Include root transform animation | OFF |
 | **Export Scale** | Scale multiplier for exported positions | 1.0 |
 
+## VRM Bone Corrections
+
+VRM models (especially those from VRoid Studio or imported via UniVRM) often have local bone axes that differ from standard Mixamo/Unity conventions. This can cause retargeted animations to display incorrectly, with feet appearing rotated outward or inward even though the animation motion itself is correct.
+
+### How It Works
+
+The VRM Bone Corrections feature applies full XYZ Euler rotation offsets to foot and toe bones during the baking process. These corrections are "baked in" to the exported animation curves, so the final GLB/FBX files will display correctly in any viewer.
+
+### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Apply VRM Bone Corrections** | Master toggle to enable/disable corrections | ON |
+| **Apply Foot Offsets** | Enable correction for LeftFoot/RightFoot | ON |
+| **Apply Toe Offsets** | Enable correction for LeftToes/RightToes | ON |
+| **Left Foot Offset** | XYZ Euler rotation offset for left foot (degrees) | (0, -90, 0) |
+| **Right Foot Offset** | XYZ Euler rotation offset for right foot (degrees) | (0, +90, 0) |
+| **Left Toes Offset** | XYZ Euler rotation offset for left toes (degrees) | (0, 0, 0) |
+| **Right Toes Offset** | XYZ Euler rotation offset for right toes (degrees) | (0, 0, 0) |
+
+### Quick Presets
+
+| Preset | Description | Left Foot | Right Foot |
+|--------|-------------|-----------|------------|
+| **VRoid A (Y±90)** | Y-axis correction (most common) | (0, -90, 0) | (0, +90, 0) |
+| **VRoid B (Z±90)** | Z-axis correction | (0, 0, -90) | (0, 0, +90) |
+| **VRoid C (X±90)** | X-axis correction | (-90, 0, 0) | (+90, 0, 0) |
+| **Toe = Foot** | Copies foot offsets to toes | - | - |
+
+### Adjusting Offsets
+
+If feet still point incorrectly after baking with default settings:
+
+1. **Try different presets**: Click VRoid A, B, or C to test different axis corrections
+2. **Use Debug mode**: Enable "Debug: Print Foot Forward" and click "Validate Inputs" to see bone orientations in Console
+3. **Adjust manually**: Expand "Advanced VRM Offsets" to fine-tune XYZ values
+4. **Include toes**: Click "Toe = Foot" to apply the same correction to toe bones
+5. **Mirror values**: Use "Mirror Left → Right" to ensure symmetric corrections
+
+### Debug Mode
+
+Enable **"Debug: Print Foot Forward"** checkbox, then click **"Validate Inputs"** to print each foot bone's forward/up/right vectors to the Console. This helps determine which axis is misaligned:
+
+```
+[RetargetAppliance] [CatGirl] === Foot Forward Debug ===
+[RetargetAppliance] [CatGirl] Root Forward: (0.000, 0.000, 1.000)
+[RetargetAppliance] [CatGirl] LeftFoot Forward: (1.000, 0.000, 0.000)  <- pointing sideways!
+[RetargetAppliance] [CatGirl] LeftFoot LocalEuler: (0.0, 90.0, 0.0)
+```
+
+If foot forward doesn't match root forward, apply an offset to correct it.
+
+### Mirror Button
+
+The "Mirror Left → Right" button copies left side offset values to right side with all components negated:
+- Left Foot (0, -90, 0) → Right Foot (0, +90, 0)
+- Left Toes (-15, -30, 0) → Right Toes (+15, +30, 0)
+
+### Technical Details
+
+- Corrections are applied to a temporary duplicate of the model during baking
+- The original scene/prefab is never modified
+- Only VRM targets are corrected (detection is automatic)
+- If a non-VRM model is processed, corrections are skipped with a warning
+- Missing bones (e.g., no toe bones) are skipped with a warning
+- Full XYZ Euler support allows correction of any axis misalignment
+
 ## Mixamo Download Settings
 
 For best results when downloading from Mixamo:
@@ -143,12 +210,35 @@ After processing, you'll find:
 - Check that the VRM has proper bone mapping
 - Try disabling "Include Root Motion" if character moves unexpectedly
 
+### Feet point outward/inward in exported animation
+- Enable "Apply VRM Bone Corrections" in settings
+- Try different quick presets: VRoid A (Y±90), VRoid B (Z±90), VRoid C (X±90)
+- Enable "Debug: Print Foot Forward" and click "Validate Inputs" to see bone orientations
+- If still incorrect, expand "Advanced VRM Offsets" and adjust XYZ values manually
+- Click "Toe = Foot" if toes also need the same correction
+- Use "Mirror Left → Right" to ensure symmetric corrections
+
 ### Export fails
 - Check Console for detailed error messages
 - Ensure UnityGLTF is installed and up to date
 - Try exporting a simple test object to verify UnityGLTF works
 
 ## Version History
+
+### V1.2
+- Enhanced VRM Bone Corrections with full XYZ Euler support
+  - Vector3 offsets (X, Y, Z) for each bone instead of Y-only
+  - Quick presets: VRoid A (Y±90), VRoid B (Z±90), VRoid C (X±90)
+  - "Toe = Foot" button to copy foot offsets to toes
+  - Separate toggles for foot and toe correction
+  - Debug mode: "Print Foot Forward" to diagnose axis misalignment
+
+### V1.1
+- Added VRM Bone Corrections feature
+  - Fixes feet rotation issues in VRoid/UniVRM models
+  - Configurable yaw offsets for feet and toes
+  - Preset profiles for common VRM types
+  - Corrections baked into exported animations
 
 ### V1.0
 - Initial release

@@ -24,7 +24,23 @@ namespace RetargetAppliance
         private float _exportScale = 1f;
         private RetargetApplianceExporter.ExportFormat _exportFormat = RetargetApplianceExporter.ExportFormat.Both;
 
+        // VRM Correction Settings (simplified)
+        private bool _enableVrmCorrections = true;
+        private bool _autoFixFootDirection = true;
+        private bool _correctLeftFoot = true;
+        private bool _correctToes = true;
+        private bool _debugPrintAlignment = false;
+
+        // Manual offset settings (advanced)
+        private bool _showVrmAdvancedFoldout = false;
+        private VrmCorrectionProfile _vrmCorrectionProfile = VrmCorrectionProfile.VRoidA_Y90;
+        private Vector3 _leftFootOffset = new Vector3(0f, -90f, 0f);
+        private Vector3 _rightFootOffset = new Vector3(0f, 90f, 0f);
+        private Vector3 _leftToesOffset = Vector3.zero;
+        private Vector3 _rightToesOffset = Vector3.zero;
+
         // UI State
+        private Vector2 _mainScrollPos;
         private Vector2 _targetsScrollPos;
         private Vector2 _animationsScrollPos;
         private bool _showTargetsFoldout = true;
@@ -41,13 +57,12 @@ namespace RetargetAppliance
         {
             var window = GetWindow<RetargetApplianceWindow>();
             window.titleContent = new GUIContent("Retarget Appliance");
-            window.minSize = new Vector2(400, 500);
+            window.minSize = new Vector2(400, 400);
             window.Show();
         }
 
         private void OnEnable()
         {
-            // Ensure folders exist on window open
             RetargetApplianceUtil.EnsureFoldersExist();
             RefreshData();
         }
@@ -67,6 +82,9 @@ namespace RetargetAppliance
 
         private void OnGUI()
         {
+            // Main scroll view wraps everything
+            _mainScrollPos = EditorGUILayout.BeginScrollView(_mainScrollPos);
+
             EditorGUILayout.Space(10);
 
             // Header
@@ -75,27 +93,8 @@ namespace RetargetAppliance
 
             EditorGUILayout.Space(10);
 
-            // Refresh button
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Refresh", GUILayout.Width(80)))
-            {
-                RefreshData();
-            }
-            GUILayout.FlexibleSpace();
-
-            // UnityGLTF status
-            bool hasUnityGLTF = RetargetApplianceExporter.IsUnityGLTFAvailable();
-            var gltfStatusStyle = new GUIStyle(EditorStyles.miniLabel);
-            gltfStatusStyle.normal.textColor = hasUnityGLTF ? Color.green : Color.red;
-            EditorGUILayout.LabelField(hasUnityGLTF ? "GLB: OK" : "GLB: Missing", gltfStatusStyle, GUILayout.Width(70));
-
-            // FBX Exporter status
-            bool hasFBXExporter = RetargetApplianceExporter.IsFBXExporterAvailable();
-            var fbxStatusStyle = new GUIStyle(EditorStyles.miniLabel);
-            fbxStatusStyle.normal.textColor = hasFBXExporter ? Color.green : Color.red;
-            EditorGUILayout.LabelField(hasFBXExporter ? "FBX: OK" : "FBX: Missing", fbxStatusStyle, GUILayout.Width(70));
-
-            EditorGUILayout.EndHorizontal();
+            // Refresh button and status
+            DrawHeaderButtons();
 
             EditorGUILayout.Space(5);
 
@@ -123,6 +122,32 @@ namespace RetargetAppliance
 
             // Action buttons
             DrawActionButtons();
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        private void DrawHeaderButtons()
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Refresh", GUILayout.Width(80)))
+            {
+                RefreshData();
+            }
+            GUILayout.FlexibleSpace();
+
+            // UnityGLTF status
+            bool hasUnityGLTF = RetargetApplianceExporter.IsUnityGLTFAvailable();
+            var gltfStatusStyle = new GUIStyle(EditorStyles.miniLabel);
+            gltfStatusStyle.normal.textColor = hasUnityGLTF ? Color.green : Color.red;
+            EditorGUILayout.LabelField(hasUnityGLTF ? "GLB: OK" : "GLB: Missing", gltfStatusStyle, GUILayout.Width(70));
+
+            // FBX Exporter status
+            bool hasFBXExporter = RetargetApplianceExporter.IsFBXExporterAvailable();
+            var fbxStatusStyle = new GUIStyle(EditorStyles.miniLabel);
+            fbxStatusStyle.normal.textColor = hasFBXExporter ? Color.green : Color.red;
+            EditorGUILayout.LabelField(hasFBXExporter ? "FBX: OK" : "FBX: Missing", fbxStatusStyle, GUILayout.Width(70));
+
+            EditorGUILayout.EndHorizontal();
         }
 
         private void DrawTargetsSection()
@@ -139,7 +164,7 @@ namespace RetargetAppliance
                 }
                 else
                 {
-                    _targetsScrollPos = EditorGUILayout.BeginScrollView(_targetsScrollPos, GUILayout.MaxHeight(120));
+                    _targetsScrollPos = EditorGUILayout.BeginScrollView(_targetsScrollPos, GUILayout.MaxHeight(100));
 
                     foreach (var vrmPath in _vrmTargets)
                     {
@@ -161,7 +186,6 @@ namespace RetargetAppliance
                     EditorGUILayout.EndScrollView();
                 }
 
-                // Open folder button
                 if (GUILayout.Button("Open Targets Folder", GUILayout.Width(150)))
                 {
                     RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.InputTargetsPath);
@@ -186,7 +210,7 @@ namespace RetargetAppliance
                 }
                 else
                 {
-                    _animationsScrollPos = EditorGUILayout.BeginScrollView(_animationsScrollPos, GUILayout.MaxHeight(120));
+                    _animationsScrollPos = EditorGUILayout.BeginScrollView(_animationsScrollPos, GUILayout.MaxHeight(100));
 
                     foreach (var fbxPath in _fbxAnimations)
                     {
@@ -195,7 +219,6 @@ namespace RetargetAppliance
                         string name = System.IO.Path.GetFileNameWithoutExtension(fbxPath);
                         EditorGUILayout.LabelField(name, EditorStyles.miniLabel);
 
-                        // Show humanoid status
                         var importer = AssetImporter.GetAtPath(fbxPath) as ModelImporter;
                         if (importer != null)
                         {
@@ -219,7 +242,6 @@ namespace RetargetAppliance
                     EditorGUILayout.EndScrollView();
                 }
 
-                // Open folder button
                 if (GUILayout.Button("Open Animations Folder", GUILayout.Width(150)))
                 {
                     RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.InputAnimationsPath);
@@ -239,9 +261,6 @@ namespace RetargetAppliance
                 EditorGUI.indentLevel++;
 
                 _bakeFPS = EditorGUILayout.IntSlider("Bake FPS", _bakeFPS, 12, 60);
-
-                EditorGUILayout.LabelField("Clip Length Mode", "Use source clip length", EditorStyles.miniLabel);
-
                 _includeRootMotion = EditorGUILayout.Toggle("Include Root Motion", _includeRootMotion);
 
                 _exportScale = EditorGUILayout.FloatField("Export Scale", _exportScale);
@@ -250,10 +269,9 @@ namespace RetargetAppliance
 
                 EditorGUILayout.Space(5);
 
-                // Export format selection
                 _exportFormat = (RetargetApplianceExporter.ExportFormat)EditorGUILayout.EnumPopup("Export Format", _exportFormat);
 
-                // Show warnings for missing exporters based on selection
+                // Show warnings for missing exporters
                 if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
                 {
                     if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
@@ -269,8 +287,155 @@ namespace RetargetAppliance
                     }
                 }
 
+                EditorGUILayout.Space(10);
+
+                // VRM Bone Corrections Section
+                DrawVrmCorrectionsSection();
+
                 EditorGUI.indentLevel--;
             }
+        }
+
+        private void DrawVrmCorrectionsSection()
+        {
+            EditorGUILayout.LabelField("VRM Foot Corrections", EditorStyles.boldLabel);
+
+            EditorGUI.indentLevel++;
+
+            // Master toggle
+            _enableVrmCorrections = EditorGUILayout.Toggle("Enable Foot Corrections", _enableVrmCorrections);
+
+            if (_enableVrmCorrections)
+            {
+                EditorGUILayout.HelpBox(
+                    "Fixes feet pointing away/backward in VRM models by automatically aligning foot forward to hips forward.",
+                    MessageType.Info);
+
+                // Auto-fix toggle (the key feature)
+                _autoFixFootDirection = EditorGUILayout.Toggle("Auto-fix Foot Direction", _autoFixFootDirection);
+
+                if (_autoFixFootDirection)
+                {
+                    EditorGUI.indentLevel++;
+                    _correctLeftFoot = EditorGUILayout.Toggle("Correct Left Foot", _correctLeftFoot);
+                    _correctToes = EditorGUILayout.Toggle("Correct Toes", _correctToes);
+                    EditorGUI.indentLevel--;
+                }
+
+                // Debug toggle
+                _debugPrintAlignment = EditorGUILayout.Toggle("Debug: Print Alignment", _debugPrintAlignment);
+
+                EditorGUILayout.Space(5);
+
+                // Advanced/Manual foldout
+                _showVrmAdvancedFoldout = EditorGUILayout.Foldout(_showVrmAdvancedFoldout, "VRM Corrections (Advanced)", true);
+
+                if (_showVrmAdvancedFoldout)
+                {
+                    EditorGUI.indentLevel++;
+
+                    EditorGUILayout.HelpBox(
+                        "Manual offsets are only used when 'Auto-fix Foot Direction' is OFF.",
+                        MessageType.None);
+
+                    // Profile dropdown
+                    EditorGUI.BeginChangeCheck();
+                    var newProfile = (VrmCorrectionProfile)EditorGUILayout.EnumPopup("Preset", _vrmCorrectionProfile);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        _vrmCorrectionProfile = newProfile;
+                        ApplyVrmCorrectionProfile(newProfile);
+                    }
+
+                    EditorGUILayout.Space(3);
+
+                    // Foot offsets
+                    _rightFootOffset = EditorGUILayout.Vector3Field("Right Foot Offset", _rightFootOffset);
+                    _leftFootOffset = EditorGUILayout.Vector3Field("Left Foot Offset", _leftFootOffset);
+
+                    EditorGUILayout.Space(3);
+
+                    // Toe offsets
+                    _rightToesOffset = EditorGUILayout.Vector3Field("Right Toes Offset", _rightToesOffset);
+                    _leftToesOffset = EditorGUILayout.Vector3Field("Left Toes Offset", _leftToesOffset);
+
+                    EditorGUILayout.Space(3);
+
+                    // Utility buttons
+                    EditorGUILayout.BeginHorizontal();
+                    if (GUILayout.Button("Mirror L→R", GUILayout.Height(20)))
+                    {
+                        _rightFootOffset = new Vector3(-_leftFootOffset.x, -_leftFootOffset.y, -_leftFootOffset.z);
+                        _rightToesOffset = new Vector3(-_leftToesOffset.x, -_leftToesOffset.y, -_leftToesOffset.z);
+                        _vrmCorrectionProfile = VrmCorrectionProfile.Custom;
+                    }
+                    if (GUILayout.Button("Reset", GUILayout.Height(20)))
+                    {
+                        ApplyVrmCorrectionProfile(VrmCorrectionProfile.None);
+                    }
+                    EditorGUILayout.EndHorizontal();
+
+                    EditorGUI.indentLevel--;
+                }
+            }
+
+            EditorGUI.indentLevel--;
+        }
+
+        private void ApplyVrmCorrectionProfile(VrmCorrectionProfile profile)
+        {
+            _vrmCorrectionProfile = profile;
+
+            switch (profile)
+            {
+                case VrmCorrectionProfile.None:
+                    _leftFootOffset = Vector3.zero;
+                    _rightFootOffset = Vector3.zero;
+                    _leftToesOffset = Vector3.zero;
+                    _rightToesOffset = Vector3.zero;
+                    break;
+
+                case VrmCorrectionProfile.VRoidA_Y90:
+                    _leftFootOffset = new Vector3(0f, -90f, 0f);
+                    _rightFootOffset = new Vector3(0f, 90f, 0f);
+                    _leftToesOffset = Vector3.zero;
+                    _rightToesOffset = Vector3.zero;
+                    break;
+
+                case VrmCorrectionProfile.VRoidB_Z90:
+                    _leftFootOffset = new Vector3(0f, 0f, -90f);
+                    _rightFootOffset = new Vector3(0f, 0f, 90f);
+                    _leftToesOffset = Vector3.zero;
+                    _rightToesOffset = Vector3.zero;
+                    break;
+
+                case VrmCorrectionProfile.VRoidC_X90:
+                    _leftFootOffset = new Vector3(-90f, 0f, 0f);
+                    _rightFootOffset = new Vector3(90f, 0f, 0f);
+                    _leftToesOffset = Vector3.zero;
+                    _rightToesOffset = Vector3.zero;
+                    break;
+
+                case VrmCorrectionProfile.Custom:
+                    break;
+            }
+        }
+
+        private VrmCorrectionSettings CreateVrmCorrectionSettings()
+        {
+            return new VrmCorrectionSettings
+            {
+                EnableCorrections = _enableVrmCorrections,
+                AutoFixFootDirection = _autoFixFootDirection,
+                CorrectLeftFoot = _correctLeftFoot,
+                CorrectToes = _correctToes,
+                DebugPrintAlignment = _debugPrintAlignment,
+                Profile = _vrmCorrectionProfile,
+                LeftFootOffset = _leftFootOffset,
+                RightFootOffset = _rightFootOffset,
+                LeftToesOffset = _leftToesOffset,
+                RightToesOffset = _rightToesOffset
+            };
         }
 
         private void DrawActionButtons()
@@ -278,7 +443,7 @@ namespace RetargetAppliance
             EditorGUILayout.Space(5);
 
             // Validate button
-            if (GUILayout.Button("Validate Inputs", GUILayout.Height(30)))
+            if (GUILayout.Button("Validate Inputs", GUILayout.Height(28)))
             {
                 PerformValidation();
             }
@@ -287,7 +452,7 @@ namespace RetargetAppliance
 
             // Force reimport button
             EditorGUI.BeginDisabledGroup(_fbxAnimations.Count == 0);
-            if (GUILayout.Button("Force Reimport Animations as Humanoid", GUILayout.Height(30)))
+            if (GUILayout.Button("Force Reimport as Humanoid", GUILayout.Height(28)))
             {
                 if (EditorUtility.DisplayDialog(
                     "Reimport Animations",
@@ -311,65 +476,21 @@ namespace RetargetAppliance
             mainButtonStyle.fontStyle = FontStyle.Bold;
 
             string buttonLabel = GetExportButtonLabel();
-            if (GUILayout.Button(buttonLabel, mainButtonStyle, GUILayout.Height(40)))
+            if (GUILayout.Button(buttonLabel, mainButtonStyle, GUILayout.Height(36)))
             {
-                // Check exporter availability based on selected format
-                bool canProceed = true;
-                string missingMessage = "";
-
-                if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                if (CheckExporterAvailability())
                 {
-                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                    string exportFormatText = _exportFormat == RetargetApplianceExporter.ExportFormat.Both ? "GLB and FBX" : _exportFormat.ToString();
+                    if (EditorUtility.DisplayDialog(
+                        "Bake and Export",
+                        $"This will:\n" +
+                        $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
+                        $"- Export each target as {exportFormatText}\n\n" +
+                        $"Continue?",
+                        "Yes", "Cancel"))
                     {
-                        missingMessage += "UnityGLTF is required for GLB export but is not installed.\n\n";
-                        canProceed = false;
+                        PerformBakeAndExport();
                     }
-                }
-
-                if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
-                {
-                    if (!RetargetApplianceExporter.IsFBXExporterAvailable())
-                    {
-                        missingMessage += "FBX Exporter package is required for FBX export but is not installed.\n\n";
-                        canProceed = false;
-                    }
-                }
-
-                if (!canProceed)
-                {
-                    bool showInstructions = EditorUtility.DisplayDialog(
-                        "Missing Dependencies",
-                        missingMessage + "Would you like to see installation instructions?",
-                        "Show Instructions", "Cancel");
-
-                    if (showInstructions)
-                    {
-                        string instructions = "";
-                        if (!RetargetApplianceExporter.IsUnityGLTFAvailable() &&
-                            (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
-                        {
-                            instructions += RetargetApplianceExporter.GetUnityGLTFInstallInstructions() + "\n\n---\n\n";
-                        }
-                        if (!RetargetApplianceExporter.IsFBXExporterAvailable() &&
-                            (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
-                        {
-                            instructions += RetargetApplianceExporter.GetFBXExporterInstallInstructions();
-                        }
-                        EditorUtility.DisplayDialog("Installation Instructions", instructions, "OK");
-                    }
-                    return;
-                }
-
-                string exportFormatText = _exportFormat == RetargetApplianceExporter.ExportFormat.Both ? "GLB and FBX" : _exportFormat.ToString();
-                if (EditorUtility.DisplayDialog(
-                    "Bake and Export",
-                    $"This will:\n" +
-                    $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
-                    $"- Export each target as {exportFormatText}\n\n" +
-                    $"Continue?",
-                    "Yes", "Cancel"))
-                {
-                    PerformBakeAndExport();
                 }
             }
 
@@ -390,6 +511,58 @@ namespace RetargetAppliance
                 EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputExportPath);
             }
             EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(10);
+        }
+
+        private bool CheckExporterAvailability()
+        {
+            bool canProceed = true;
+            string missingMessage = "";
+
+            if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+            {
+                if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                {
+                    missingMessage += "UnityGLTF is required for GLB export but is not installed.\n\n";
+                    canProceed = false;
+                }
+            }
+
+            if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+            {
+                if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                {
+                    missingMessage += "FBX Exporter package is required for FBX export but is not installed.\n\n";
+                    canProceed = false;
+                }
+            }
+
+            if (!canProceed)
+            {
+                bool showInstructions = EditorUtility.DisplayDialog(
+                    "Missing Dependencies",
+                    missingMessage + "Would you like to see installation instructions?",
+                    "Show Instructions", "Cancel");
+
+                if (showInstructions)
+                {
+                    string instructions = "";
+                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable() &&
+                        (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
+                    {
+                        instructions += RetargetApplianceExporter.GetUnityGLTFInstallInstructions() + "\n\n---\n\n";
+                    }
+                    if (!RetargetApplianceExporter.IsFBXExporterAvailable() &&
+                        (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both))
+                    {
+                        instructions += RetargetApplianceExporter.GetFBXExporterInstallInstructions();
+                    }
+                    EditorUtility.DisplayDialog("Installation Instructions", instructions, "OK");
+                }
+            }
+
+            return canProceed;
         }
 
         private string GetExportButtonLabel()
@@ -397,12 +570,12 @@ namespace RetargetAppliance
             switch (_exportFormat)
             {
                 case RetargetApplianceExporter.ExportFormat.GLB:
-                    return "Bake + Export GLB for ALL Targets";
+                    return "Bake + Export GLB";
                 case RetargetApplianceExporter.ExportFormat.FBX:
-                    return "Bake + Export FBX for ALL Targets";
+                    return "Bake + Export FBX";
                 case RetargetApplianceExporter.ExportFormat.Both:
                 default:
-                    return "Bake + Export GLB/FBX for ALL Targets";
+                    return "Bake + Export GLB/FBX";
             }
         }
 
@@ -424,7 +597,6 @@ namespace RetargetAppliance
             {
                 messages.Add($"Found {_vrmTargets.Count} VRM target(s)");
 
-                // Validate each target
                 foreach (var vrmPath in _vrmTargets)
                 {
                     var prefab = RetargetApplianceUtil.GetVRMPrefab(vrmPath);
@@ -435,12 +607,24 @@ namespace RetargetAppliance
                     }
                     else
                     {
-                        // Check for humanoid setup
                         var tempInstance = Instantiate(prefab);
                         if (!RetargetApplianceUtil.ValidateHumanoidSetup(tempInstance, out string error))
                         {
                             messages.Add($"WARNING: {error}");
                             hasWarnings = true;
+                        }
+                        else
+                        {
+                            // Debug: Print foot forward vectors if enabled
+                            if (_debugPrintAlignment && _enableVrmCorrections)
+                            {
+                                var animator = tempInstance.GetComponent<Animator>();
+                                if (animator != null)
+                                {
+                                    string targetName = RetargetApplianceUtil.GetTargetName(vrmPath);
+                                    RetargetApplianceVrmCorrections.PrintFootForwardVectors(animator, targetName);
+                                }
+                            }
                         }
                         DestroyImmediate(tempInstance);
                     }
@@ -459,9 +643,9 @@ namespace RetargetAppliance
             {
                 messages.Add($"Found {animValidation.TotalFBXCount} FBX file(s) with {animValidation.ValidClipCount} clip(s)");
 
-                foreach (var error in animValidation.Errors)
+                foreach (var err in animValidation.Errors)
                 {
-                    messages.Add($"ERROR: {error}");
+                    messages.Add($"ERROR: {err}");
                     hasErrors = true;
                 }
 
@@ -472,7 +656,7 @@ namespace RetargetAppliance
                 }
             }
 
-            // Check UnityGLTF (for GLB export)
+            // Check exporters
             if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
             {
                 if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
@@ -482,11 +666,10 @@ namespace RetargetAppliance
                 }
                 else
                 {
-                    messages.Add("UnityGLTF: Installed and ready for GLB export");
+                    messages.Add("UnityGLTF: OK");
                 }
             }
 
-            // Check FBX Exporter (for FBX export)
             if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
             {
                 if (!RetargetApplianceExporter.IsFBXExporterAvailable())
@@ -496,7 +679,7 @@ namespace RetargetAppliance
                 }
                 else
                 {
-                    messages.Add("FBX Exporter: Installed and ready for FBX export");
+                    messages.Add("FBX Exporter: OK");
                 }
             }
 
@@ -515,7 +698,7 @@ namespace RetargetAppliance
             else
             {
                 _validationMessageType = MessageType.Info;
-                _validationMessage = "Validation passed! Ready to bake and export.\n" + _validationMessage;
+                _validationMessage = "Ready to bake and export.\n" + _validationMessage;
             }
         }
 
@@ -523,29 +706,27 @@ namespace RetargetAppliance
         {
             try
             {
-                // Get all humanoid clips
                 var sourceClips = RetargetApplianceImporter.GetAllHumanoidClips();
 
                 if (sourceClips.Count == 0)
                 {
                     EditorUtility.DisplayDialog(
                         "No Clips",
-                        "No valid humanoid animation clips found.\n\nMake sure to run 'Force Reimport Animations as Humanoid' first.",
+                        "No valid humanoid animation clips found.\n\nMake sure to run 'Force Reimport as Humanoid' first.",
                         "OK");
                     return;
                 }
 
                 RetargetApplianceUtil.LogInfo($"Starting bake process with {sourceClips.Count} clips for {_vrmTargets.Count} targets...");
 
-                // Create or open workspace scene
                 Scene workspaceScene = EnsureWorkspaceScene();
 
-                // Settings
                 var settings = new RetargetApplianceBaker.BakeSettings
                 {
                     FPS = _bakeFPS,
                     IncludeRootMotion = _includeRootMotion,
-                    ExportScale = _exportScale
+                    ExportScale = _exportScale,
+                    VrmCorrections = _enableVrmCorrections ? CreateVrmCorrectionSettings() : null
                 };
 
                 int totalTargets = _vrmTargets.Count;
@@ -558,7 +739,6 @@ namespace RetargetAppliance
                 bool exportGLB = _exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
                 bool exportFBX = _exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
 
-                // Process each target
                 for (int i = 0; i < _vrmTargets.Count; i++)
                 {
                     string vrmPath = _vrmTargets[i];
@@ -573,7 +753,6 @@ namespace RetargetAppliance
                         break;
                     }
 
-                    // Bake
                     var bakeResult = RetargetApplianceBaker.BakeAnimationsForTarget(vrmPath, sourceClips, settings);
 
                     if (!string.IsNullOrEmpty(bakeResult.Error))
@@ -590,10 +769,8 @@ namespace RetargetAppliance
                         continue;
                     }
 
-                    // Export
                     var bakedClips = RetargetApplianceBaker.GetBakedClips(bakeResult);
 
-                    // Export GLB if enabled
                     if (exportGLB)
                     {
                         var glbResult = RetargetApplianceExporter.ExportAsGLB(
@@ -614,7 +791,6 @@ namespace RetargetAppliance
                         }
                     }
 
-                    // Export FBX if enabled
                     if (exportFBX)
                     {
                         var fbxResult = RetargetApplianceExporter.ExportAsFBX(
@@ -635,7 +811,6 @@ namespace RetargetAppliance
                         }
                     }
 
-                    // Cleanup instantiated target
                     CleanupTarget(bakeResult);
                 }
 
@@ -655,16 +830,14 @@ namespace RetargetAppliance
                 if (exportGLB)
                 {
                     summaryLines.Add($"GLB: {glbSuccessCount} successful, {glbFailCount} failed");
-                    summaryLines.Add($"  -> {RetargetApplianceUtil.OutputExportPath}/<Target>.glb");
                 }
 
                 if (exportFBX)
                 {
                     summaryLines.Add($"FBX: {fbxSuccessCount} successful, {fbxFailCount} failed");
-                    summaryLines.Add($"  -> {RetargetApplianceUtil.OutputExportPath}/<Target>.fbx");
                 }
 
-                summaryLines.Add($"\nBaked animations: {RetargetApplianceUtil.OutputPrefabsPath}");
+                summaryLines.Add($"\nOutput: {RetargetApplianceUtil.OutputExportPath}");
 
                 string summary = string.Join("\n", summaryLines);
                 EditorUtility.DisplayDialog("Complete", summary, "OK");
@@ -682,7 +855,6 @@ namespace RetargetAppliance
 
         private Scene EnsureWorkspaceScene()
         {
-            // Check if we need to save the current scene
             Scene currentScene = SceneManager.GetActiveScene();
             if (currentScene.isDirty)
             {
@@ -695,21 +867,17 @@ namespace RetargetAppliance
                 }
             }
 
-            // Check if workspace scene exists
             string scenePath = RetargetApplianceUtil.WorkspaceScenePath;
 
             if (!System.IO.File.Exists(scenePath))
             {
-                // Create new scene
                 var newScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-                // Add basic lighting
                 var lightGO = new GameObject("Directional Light");
                 var light = lightGO.AddComponent<Light>();
                 light.type = LightType.Directional;
                 lightGO.transform.rotation = Quaternion.Euler(50, -30, 0);
 
-                // Save the scene
                 RetargetApplianceUtil.EnsureFolderExists("Assets/Scenes");
                 EditorSceneManager.SaveScene(newScene, scenePath);
 
@@ -718,7 +886,6 @@ namespace RetargetAppliance
             }
             else
             {
-                // Open existing workspace scene
                 return EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
             }
         }

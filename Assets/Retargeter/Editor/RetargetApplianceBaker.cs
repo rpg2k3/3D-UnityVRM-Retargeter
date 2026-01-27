@@ -13,6 +13,18 @@ namespace RetargetAppliance
     /// </summary>
     public static class RetargetApplianceBaker
     {
+        // FBX-compatible property names for transform curves
+        private const string PositionPropertyX = "m_LocalPosition.x";
+        private const string PositionPropertyY = "m_LocalPosition.y";
+        private const string PositionPropertyZ = "m_LocalPosition.z";
+
+        // Using "localEulerAnglesRaw" for Euler rotation curves (FBX Exporter compatible)
+        private const string RotationPropertyX = "localEulerAnglesRaw.x";
+        private const string RotationPropertyY = "localEulerAnglesRaw.y";
+        private const string RotationPropertyZ = "localEulerAnglesRaw.z";
+
+        private static bool _hasLoggedPropertyNames = false;
+
         /// <summary>
         /// Settings for the baking process.
         /// </summary>
@@ -22,6 +34,9 @@ namespace RetargetAppliance
             public bool IncludeRootMotion = false;
             public float ExportScale = 1f;
             public bool OptimizeStaticCurves = true;
+
+            /// <summary>VRM bone correction settings. If null, no corrections are applied.</summary>
+            public VrmCorrectionSettings VrmCorrections = null;
         }
 
         /// <summary>
@@ -75,6 +90,8 @@ namespace RetargetAppliance
                 TargetName = RetargetApplianceUtil.GetTargetName(vrmPath)
             };
 
+            _hasLoggedPropertyNames = false;
+
             // Get the VRM prefab
             GameObject prefab = RetargetApplianceUtil.GetVRMPrefab(vrmPath);
             if (prefab == null)
@@ -103,6 +120,23 @@ namespace RetargetAppliance
             string animationsFolder = $"{targetOutputFolder}/Animations";
             RetargetApplianceUtil.EnsureFolderExists(targetOutputFolder);
             RetargetApplianceUtil.EnsureFolderExists(animationsFolder);
+
+            // Check if VRM corrections should be applied
+            bool applyVrmCorrections = settings.VrmCorrections != null &&
+                                       settings.VrmCorrections.EnableCorrections &&
+                                       settings.VrmCorrections.HasAnyCorrection();
+
+            if (applyVrmCorrections)
+            {
+                bool isVrm = RetargetApplianceVrmCorrections.IsVRMTarget(result.TargetInstance);
+                if (!isVrm)
+                {
+                    RetargetApplianceUtil.LogWarning($"VRM corrections enabled but '{result.TargetName}' is not detected as a VRM target. Corrections will still be applied.");
+                }
+
+                string mode = settings.VrmCorrections.AutoFixFootDirection ? "Auto-fix" : "Manual offsets";
+                RetargetApplianceUtil.LogInfo($"VRM corrections enabled for '{result.TargetName}' ({mode})");
+            }
 
             // Bake each source clip
             for (int i = 0; i < sourceClips.Count; i++)
@@ -148,6 +182,7 @@ namespace RetargetAppliance
 
         /// <summary>
         /// Bakes a single animation clip onto the target.
+        /// CRITICAL: VRM corrections are applied AFTER graph.Evaluate() and BEFORE recording curves.
         /// </summary>
         private static BakeResult BakeSingleClip(
             GameObject targetInstance,
@@ -184,7 +219,7 @@ namespace RetargetAppliance
                 var transforms = new List<Transform>();
                 RetargetApplianceUtil.GetAllChildTransforms(targetInstance.transform, transforms);
 
-                // Store initial transforms for optimization
+                // Store initial transforms for reset after baking
                 var initialStates = new Dictionary<Transform, TransformState>();
                 foreach (var t in transforms)
                 {
@@ -206,6 +241,14 @@ namespace RetargetAppliance
                 var output = AnimationPlayableOutput.Create(graph, "Output", animator);
                 output.SetSourcePlayable(clipPlayable);
 
+                // Prepare VRM correction data
+                bool applyCorrections = settings.VrmCorrections != null &&
+                                        settings.VrmCorrections.EnableCorrections &&
+                                        settings.VrmCorrections.HasAnyCorrection();
+
+                FootCorrectionData correctionData = null;
+                string logPrefix = $"[RetargetAppliance] [{targetName}]";
+
                 // Sample each frame
                 for (int frame = 0; frame < frameCount; frame++)
                 {
@@ -213,11 +256,33 @@ namespace RetargetAppliance
                     if (time > clipLength)
                         time = clipLength;
 
-                    // Set playable time and evaluate
+                    // STEP 1: Set playable time and evaluate
                     clipPlayable.SetTime(time);
                     graph.Evaluate();
 
-                    // Record all transform states
+                    // STEP 2: Apply VRM corrections AFTER sampling, BEFORE recording
+                    if (applyCorrections)
+                    {
+                        if (settings.VrmCorrections.AutoFixFootDirection)
+                        {
+                            // Compute auto-correction on first frame
+                            if (correctionData == null)
+                            {
+                                correctionData = RetargetApplianceVrmCorrections.ComputeAutoCorrection(
+                                    animator, settings.VrmCorrections, logPrefix);
+                            }
+
+                            // Apply the pre-computed correction every frame
+                            RetargetApplianceVrmCorrections.ApplyCorrection(animator, correctionData, settings.VrmCorrections);
+                        }
+                        else
+                        {
+                            // Apply manual Euler offsets
+                            RetargetApplianceVrmCorrections.ApplyManualCorrections(animator, settings.VrmCorrections);
+                        }
+                    }
+
+                    // STEP 3: Record all transform states (now with corrections applied)
                     foreach (var t in transforms)
                     {
                         // Skip root if not including root motion
@@ -231,8 +296,7 @@ namespace RetargetAppliance
                         curves.PosY.AddKey(time, t.localPosition.y * settings.ExportScale);
                         curves.PosZ.AddKey(time, t.localPosition.z * settings.ExportScale);
 
-                        // Record local rotation as Euler angles (degrees) for FBX export compatibility
-                        // Using localEulerAngles with continuity handling to prevent angle discontinuities
+                        // Record local rotation as Euler angles (degrees)
                         Vector3 euler = t.localRotation.eulerAngles;
 
                         // Handle angle continuity to prevent jumps (e.g., 359 -> 1)
@@ -246,9 +310,6 @@ namespace RetargetAppliance
                         curves.EulerX.AddKey(time, euler.x);
                         curves.EulerY.AddKey(time, euler.y);
                         curves.EulerZ.AddKey(time, euler.z);
-
-                        // Note: Scale curves intentionally omitted to avoid FBX export warnings
-                        // ("no mapping from Unity 'localScale.z' to fbx property")
                     }
                 }
 
@@ -259,6 +320,13 @@ namespace RetargetAppliance
                 foreach (var kvp in initialStates)
                 {
                     kvp.Value.Apply(kvp.Key);
+                }
+
+                // Log property names once per session
+                if (!_hasLoggedPropertyNames)
+                {
+                    RetargetApplianceUtil.LogInfo($"Curve bindings: Position=[{PositionPropertyX}], Rotation=[{RotationPropertyX}]");
+                    _hasLoggedPropertyNames = true;
                 }
 
                 // Apply curves to the clip
@@ -273,32 +341,23 @@ namespace RetargetAppliance
                     // Optionally skip static curves
                     if (settings.OptimizeStaticCurves)
                     {
-                        var initial = initialStates[t];
-
                         if (!IsAnimated(curves.PosX) && !IsAnimated(curves.PosY) && !IsAnimated(curves.PosZ) &&
                             !IsAnimated(curves.EulerX) && !IsAnimated(curves.EulerY) && !IsAnimated(curves.EulerZ))
                         {
-                            // Transform never changes, skip it
                             continue;
                         }
                     }
 
                     // Position
-                    SetCurve(result.BakedClip, path, "localPosition.x", curves.PosX);
-                    SetCurve(result.BakedClip, path, "localPosition.y", curves.PosY);
-                    SetCurve(result.BakedClip, path, "localPosition.z", curves.PosZ);
+                    SetCurve(result.BakedClip, path, PositionPropertyX, curves.PosX);
+                    SetCurve(result.BakedClip, path, PositionPropertyY, curves.PosY);
+                    SetCurve(result.BakedClip, path, PositionPropertyZ, curves.PosZ);
 
-                    // Rotation using Euler angles (degrees) for FBX export compatibility
-                    // localEulerAnglesRaw is the property name Unity uses internally for Euler curves
-                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.x", curves.EulerX);
-                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.y", curves.EulerY);
-                    SetCurve(result.BakedClip, path, "localEulerAnglesRaw.z", curves.EulerZ);
-
-                    // Note: Scale curves not exported - Unity FBX Exporter has no mapping for localScale
+                    // Rotation
+                    SetCurve(result.BakedClip, path, RotationPropertyX, curves.EulerX);
+                    SetCurve(result.BakedClip, path, RotationPropertyY, curves.EulerY);
+                    SetCurve(result.BakedClip, path, RotationPropertyZ, curves.EulerZ);
                 }
-
-                // Note: EnsureQuaternionContinuity() not needed since we use Euler curves
-                // Euler continuity is handled during sampling via MakeEulerContinuous()
 
                 // Save the baked clip as an asset
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
@@ -315,19 +374,12 @@ namespace RetargetAppliance
             return result;
         }
 
-        /// <summary>
-        /// Sets a curve on an animation clip using EditorCurveBinding.
-        /// </summary>
         private static void SetCurve(AnimationClip clip, string path, string propertyName, AnimationCurve curve)
         {
             var binding = EditorCurveBinding.FloatCurve(path, typeof(Transform), propertyName);
             AnimationUtility.SetEditorCurve(clip, binding, curve);
         }
 
-        /// <summary>
-        /// Makes Euler angles continuous by adjusting for angle wraparound.
-        /// Prevents sudden jumps from e.g. 359° to 1° by using the shortest path.
-        /// </summary>
         private static Vector3 MakeEulerContinuous(Vector3 prev, Vector3 current)
         {
             return new Vector3(
@@ -337,15 +389,10 @@ namespace RetargetAppliance
             );
         }
 
-        /// <summary>
-        /// Makes a single angle continuous relative to a previous angle.
-        /// </summary>
         private static float MakeAngleContinuous(float prev, float current)
         {
             float delta = current - prev;
 
-            // If the delta is more than 180°, we wrapped around
-            // Adjust to take the shorter path
             while (delta > 180f)
             {
                 current -= 360f;
@@ -360,9 +407,6 @@ namespace RetargetAppliance
             return current;
         }
 
-        /// <summary>
-        /// Checks if a curve has any actual animation (values change over time).
-        /// </summary>
         private static bool IsAnimated(AnimationCurve curve, float threshold = 0.0001f)
         {
             if (curve.keys.Length < 2)
@@ -378,18 +422,13 @@ namespace RetargetAppliance
             return false;
         }
 
-        /// <summary>
-        /// Creates a preview prefab with an AnimatorController for testing.
-        /// </summary>
         private static string CreatePreviewPrefab(TargetBakeResult bakeResult, string outputFolder)
         {
             try
             {
-                // Create animator controller
                 string controllerPath = $"{outputFolder}/{bakeResult.TargetName}_Controller.controller";
                 var controller = UnityEditor.Animations.AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
 
-                // Add layer if needed
                 if (controller.layers.Length == 0)
                 {
                     controller.AddLayer("Base Layer");
@@ -397,13 +436,11 @@ namespace RetargetAppliance
 
                 var rootStateMachine = controller.layers[0].stateMachine;
 
-                // Add states for each baked clip
                 foreach (var clipResult in bakeResult.ClipResults)
                 {
                     if (!clipResult.Success || clipResult.BakedClip == null)
                         continue;
 
-                    // Reload the clip from the asset
                     var savedClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipResult.SavedAssetPath);
                     if (savedClip == null)
                         continue;
@@ -414,11 +451,9 @@ namespace RetargetAppliance
 
                 AssetDatabase.SaveAssets();
 
-                // Assign controller to the instance
                 var animator = bakeResult.TargetInstance.GetComponent<Animator>();
                 animator.runtimeAnimatorController = controller;
 
-                // Save as prefab
                 string prefabPath = $"{outputFolder}/{bakeResult.TargetName}.prefab";
                 PrefabUtility.SaveAsPrefabAsset(bakeResult.TargetInstance, prefabPath);
 
@@ -432,9 +467,6 @@ namespace RetargetAppliance
             }
         }
 
-        /// <summary>
-        /// Helper class to store transform state.
-        /// </summary>
         private class TransformState
         {
             public Vector3 LocalPosition;
@@ -456,21 +488,14 @@ namespace RetargetAppliance
             }
         }
 
-        /// <summary>
-        /// Helper class to store animation curves for a transform.
-        /// Note: Scale curves intentionally omitted - Unity FBX Exporter has no mapping for localScale.
-        /// Rotation uses Euler angles (degrees) instead of quaternions for FBX export compatibility.
-        /// </summary>
         private class TransformCurves
         {
             public AnimationCurve PosX = new AnimationCurve();
             public AnimationCurve PosY = new AnimationCurve();
             public AnimationCurve PosZ = new AnimationCurve();
-            // Euler angles in degrees (not quaternion components)
             public AnimationCurve EulerX = new AnimationCurve();
             public AnimationCurve EulerY = new AnimationCurve();
             public AnimationCurve EulerZ = new AnimationCurve();
-            // Track previous euler to handle angle continuity
             public Vector3 PrevEuler = Vector3.zero;
             public bool HasPrevEuler = false;
         }
@@ -486,7 +511,6 @@ namespace RetargetAppliance
             {
                 if (clipResult.Success && clipResult.BakedClip != null)
                 {
-                    // Load from saved asset to ensure we have the persisted version
                     var savedClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipResult.SavedAssetPath);
                     if (savedClip != null)
                     {
