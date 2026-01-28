@@ -250,6 +250,11 @@ namespace RetargetAppliance
                                              settings.VrmCorrections.EnableToeStabilization &&
                                              (settings.VrmCorrections.StabilizeRightToe || settings.VrmCorrections.StabilizeLeftToe);
 
+                bool applyToeYawCorrection = settings.VrmCorrections != null &&
+                                             settings.VrmCorrections.EnableToeYawCorrection &&
+                                             settings.VrmCorrections.ToeYawCorrectionMode != ToeYawCorrectionMode.None &&
+                                             (settings.VrmCorrections.CorrectRightToeYaw || settings.VrmCorrections.CorrectLeftToeYaw);
+
                 FootCorrectionData correctionData = null;
                 ToeStabilizationData toeStabilizationData = null;
                 string logPrefix = $"[RetargetAppliance] [{targetName}]";
@@ -304,7 +309,16 @@ namespace RetargetAppliance
                             animator, toeStabilizationData, settings.VrmCorrections, debugThisFrame, logPrefix);
                     }
 
-                    // STEP 5: Record all transform states (now with corrections applied)
+                    // STEP 5: Apply toe yaw correction to ensure foot defines forward direction
+                    // This reduces "toe overdrives foot" by clamping or dampening toe yaw
+                    if (applyToeYawCorrection)
+                    {
+                        bool debugThisFrame = frame == 0 && settings.VrmCorrections.DebugPrintAlignment;
+                        RetargetApplianceVrmCorrections.ApplyToeYawCorrection(
+                            animator, settings.VrmCorrections, debugThisFrame, logPrefix);
+                    }
+
+                    // STEP 6: Record all transform states (now with corrections applied)
                     foreach (var t in transforms)
                     {
                         // Skip root if not including root motion

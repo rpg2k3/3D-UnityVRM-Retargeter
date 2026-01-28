@@ -38,6 +38,22 @@ namespace RetargetAppliance
     }
 
     /// <summary>
+    /// Toe yaw correction mode for reducing "toe overdrives foot" effect.
+    /// Applied post-retarget, pre-export to ensure foot defines forward direction.
+    /// </summary>
+    public enum ToeYawCorrectionMode
+    {
+        /// <summary>No toe yaw correction applied.</summary>
+        None,
+
+        /// <summary>Clamp toe local Y rotation to ±MaxYawDegrees (default ±10°).</summary>
+        ClampYaw,
+
+        /// <summary>Blend toe rotation toward identity (0 rotation) with a blend factor.</summary>
+        BlendTowardIdentity
+    }
+
+    /// <summary>
     /// Serializable settings for VRM bone corrections with full XYZ Euler support.
     /// </summary>
     [Serializable]
@@ -90,6 +106,26 @@ namespace RetargetAppliance
         /// <summary>Apply toe stabilization to left toe.</summary>
         public bool StabilizeLeftToe = false;
 
+        // === Toe Yaw Correction Settings (Post-Retarget, Pre-Export) ===
+
+        /// <summary>Enable toe yaw correction to ensure foot defines forward direction.</summary>
+        public bool EnableToeYawCorrection = true;
+
+        /// <summary>Toe yaw correction mode (ClampYaw or BlendTowardIdentity).</summary>
+        public ToeYawCorrectionMode ToeYawCorrectionMode = ToeYawCorrectionMode.BlendTowardIdentity;
+
+        /// <summary>Max toe yaw deviation in degrees when using ClampYaw mode (default ±10°).</summary>
+        public float MaxToeYawDegrees = 10f;
+
+        /// <summary>Blend factor toward identity when using BlendTowardIdentity mode (0.3 = 30% toward identity).</summary>
+        public float ToeYawBlendFactor = 0.3f;
+
+        /// <summary>Apply toe yaw correction to right toe.</summary>
+        public bool CorrectRightToeYaw = true;
+
+        /// <summary>Apply toe yaw correction to left toe.</summary>
+        public bool CorrectLeftToeYaw = true;
+
         /// <summary>Creates default settings with auto-fix enabled.</summary>
         public VrmCorrectionSettings()
         {
@@ -116,7 +152,14 @@ namespace RetargetAppliance
                 ToeStabilizationMode = this.ToeStabilizationMode,
                 ToeRotationStrength = this.ToeRotationStrength,
                 StabilizeRightToe = this.StabilizeRightToe,
-                StabilizeLeftToe = this.StabilizeLeftToe
+                StabilizeLeftToe = this.StabilizeLeftToe,
+                // Toe yaw correction settings
+                EnableToeYawCorrection = this.EnableToeYawCorrection,
+                ToeYawCorrectionMode = this.ToeYawCorrectionMode,
+                MaxToeYawDegrees = this.MaxToeYawDegrees,
+                ToeYawBlendFactor = this.ToeYawBlendFactor,
+                CorrectRightToeYaw = this.CorrectRightToeYaw,
+                CorrectLeftToeYaw = this.CorrectLeftToeYaw
             };
         }
 
@@ -655,6 +698,133 @@ namespace RetargetAppliance
         {
             Vector3 euler = q.eulerAngles;
             return euler.y;
+        }
+
+        /// <summary>
+        /// Applies toe yaw correction to reduce "toe overdrives foot" effect.
+        /// This ensures the foot bone defines the forward direction, not the toe.
+        ///
+        /// Run ONLY during bake/export (Editor only).
+        /// Call this AFTER foot corrections and toe stabilization, BEFORE recording curves.
+        ///
+        /// Two modes available:
+        /// - ClampYaw: Clamp toe local Y rotation to ±MaxYawDegrees (default ±10°)
+        /// - BlendTowardIdentity: Blend toe rotation toward identity with a blend factor (default 0.3)
+        /// </summary>
+        /// <param name="animator">The humanoid animator with VRM bones.</param>
+        /// <param name="settings">VRM correction settings containing toe yaw parameters.</param>
+        /// <param name="debugThisFrame">If true, logs debug info for this frame.</param>
+        /// <param name="logPrefix">Optional prefix for debug log messages.</param>
+        public static void ApplyToeYawCorrection(
+            Animator animator,
+            VrmCorrectionSettings settings,
+            bool debugThisFrame = false,
+            string logPrefix = null)
+        {
+            if (animator == null || !animator.isHuman || settings == null)
+                return;
+
+            if (!settings.EnableToeYawCorrection || settings.ToeYawCorrectionMode == ToeYawCorrectionMode.None)
+                return;
+
+            string prefix = string.IsNullOrEmpty(logPrefix) ? "[RetargetAppliance]" : logPrefix;
+
+            // Get foot and toe transforms
+            Transform rightFoot = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+            Transform leftFoot = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+            Transform rightToes = animator.GetBoneTransform(HumanBodyBones.RightToes);
+            Transform leftToes = animator.GetBoneTransform(HumanBodyBones.LeftToes);
+
+            // Apply to right toe
+            if (settings.CorrectRightToeYaw && rightToes != null && rightFoot != null)
+            {
+                ApplyToeYawCorrectionSingle(
+                    rightToes,
+                    rightFoot,
+                    settings,
+                    debugThisFrame,
+                    prefix,
+                    "RightToe");
+            }
+
+            // Apply to left toe
+            if (settings.CorrectLeftToeYaw && leftToes != null && leftFoot != null)
+            {
+                ApplyToeYawCorrectionSingle(
+                    leftToes,
+                    leftFoot,
+                    settings,
+                    debugThisFrame,
+                    prefix,
+                    "LeftToe");
+            }
+        }
+
+        /// <summary>
+        /// Applies toe yaw correction to a single toe bone.
+        /// </summary>
+        private static void ApplyToeYawCorrectionSingle(
+            Transform toe,
+            Transform foot,
+            VrmCorrectionSettings settings,
+            bool debug,
+            string logPrefix,
+            string boneName)
+        {
+            // Read current toe local rotation
+            Quaternion originalToeRot = toe.localRotation;
+            Vector3 originalEuler = originalToeRot.eulerAngles;
+
+            // Normalize yaw to -180 to +180 range
+            float toeYaw = NormalizeAngle(originalEuler.y);
+
+            Quaternion correctedRot;
+
+            if (settings.ToeYawCorrectionMode == ToeYawCorrectionMode.ClampYaw)
+            {
+                // Mode A: Clamp toe local Y rotation to ±MaxYawDegrees
+                float maxYaw = Mathf.Abs(settings.MaxToeYawDegrees);
+                float clampedYaw = Mathf.Clamp(toeYaw, -maxYaw, maxYaw);
+
+                // Reconstruct rotation with clamped yaw, keeping original pitch and roll
+                correctedRot = Quaternion.Euler(originalEuler.x, clampedYaw, originalEuler.z);
+
+                if (debug)
+                {
+                    Debug.Log($"{logPrefix} {boneName} YawClamp: original Y={toeYaw:F1}°, clamped Y={clampedYaw:F1}° (max ±{maxYaw:F1}°)");
+                }
+            }
+            else // BlendTowardIdentity
+            {
+                // Mode B: Blend toe rotation toward identity with blend factor
+                // Factor of 0.3 means 30% toward identity (reduce rotation by 30%)
+                float blendFactor = Mathf.Clamp01(settings.ToeYawBlendFactor);
+
+                // Slerp from original toward identity
+                // At blendFactor=0.3: result = Slerp(original, identity, 0.3) = 70% original + 30% identity
+                correctedRot = Quaternion.Slerp(originalToeRot, Quaternion.identity, blendFactor);
+
+                if (debug)
+                {
+                    Vector3 correctedEuler = correctedRot.eulerAngles;
+                    Debug.Log($"{logPrefix} {boneName} BlendToIdentity: original={originalEuler:F1}, corrected={correctedEuler:F1}, factor={blendFactor:F2}");
+                }
+            }
+
+            // Apply the corrected rotation
+            toe.localRotation = correctedRot;
+        }
+
+        /// <summary>
+        /// Normalizes an angle to the range -180 to +180 degrees.
+        /// </summary>
+        private static float NormalizeAngle(float angle)
+        {
+            while (angle > 180f)
+                angle -= 360f;
+            while (angle < -180f)
+                angle += 360f;
+            return angle;
         }
 
         private static void LogWarning(string prefix, string message)
