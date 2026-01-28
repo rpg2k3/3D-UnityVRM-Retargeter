@@ -165,15 +165,32 @@ namespace RetargetAppliance
         }
 
         /// <summary>
-        /// Gets a clean name for an animation clip.
+        /// Gets a unique name for an animation clip.
+        /// Combines FBX filename with clip name to prevent collisions when multiple
+        /// FBX files have clips with the same internal name (e.g., "mixamo.com").
         /// </summary>
         public static string GetAnimationName(string fbxPath, AnimationClip clip)
         {
+            string fbxName = SanitizeName(Path.GetFileNameWithoutExtension(fbxPath));
+
             if (clip != null && !string.IsNullOrEmpty(clip.name) && !clip.name.Contains("__preview__"))
             {
-                return SanitizeName(clip.name);
+                string clipName = SanitizeName(clip.name);
+
+                // If clip name is different from FBX name and not a generic name like "mixamo.com",
+                // use just the clip name for cleaner output
+                if (!string.Equals(clipName, fbxName, StringComparison.OrdinalIgnoreCase) &&
+                    !clipName.Equals("mixamo.com", StringComparison.OrdinalIgnoreCase) &&
+                    !clipName.Equals("mixamo", StringComparison.OrdinalIgnoreCase))
+                {
+                    return clipName;
+                }
+
+                // For generic/matching names, combine FBX name with clip name to ensure uniqueness
+                return fbxName;
             }
-            return SanitizeName(Path.GetFileNameWithoutExtension(fbxPath));
+
+            return fbxName;
         }
 
         /// <summary>

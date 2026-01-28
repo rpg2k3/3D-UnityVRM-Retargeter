@@ -850,8 +850,10 @@ namespace RetargetAppliance
                             continue;
                         }
 
-                        // Create unique export filename: TargetName__ClipName
-                        string sourceClipName = clipResult.SourceClip != null ? clipResult.SourceClip.name : savedClip.name;
+                        // Create unique export filename using the preserved unique clip name
+                        string sourceClipName = !string.IsNullOrEmpty(clipResult.SourceClipName)
+                            ? clipResult.SourceClipName
+                            : (clipResult.SourceClip != null ? clipResult.SourceClip.name : savedClip.name);
                         string exportFileName = RetargetApplianceUtil.GetExportFileName(targetName, sourceClipName);
 
                         // Create a list with just this one clip for export
@@ -870,7 +872,7 @@ namespace RetargetAppliance
                             if (glbResult.Success)
                             {
                                 glbSuccessCount++;
-                                RetargetApplianceUtil.LogInfo($"GLB exported: {glbResult.ExportPath}");
+                                RetargetApplianceUtil.LogInfo($"Exported GLB: {glbResult.ExportPath}");
                             }
                             else
                             {
@@ -892,7 +894,7 @@ namespace RetargetAppliance
                             if (fbxResult.Success)
                             {
                                 fbxSuccessCount++;
-                                RetargetApplianceUtil.LogInfo($"FBX exported: {fbxResult.ExportPath}");
+                                RetargetApplianceUtil.LogInfo($"Exported FBX: {fbxResult.ExportPath}");
                             }
                             else
                             {

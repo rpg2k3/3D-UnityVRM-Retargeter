@@ -47,6 +47,8 @@ namespace RetargetAppliance
             public AnimationClip SourceClip;
             public AnimationClip BakedClip;
             public string TargetName;
+            /// <summary>Unique source clip name (from AnimationClipInfo.ClipName) for export naming.</summary>
+            public string SourceClipName;
             public string SavedAssetPath;
             public string Error;
             public bool Success => string.IsNullOrEmpty(Error) && BakedClip != null;
@@ -163,7 +165,7 @@ namespace RetargetAppliance
 
                 if (bakeResult.Success)
                 {
-                    RetargetApplianceUtil.LogInfo($"Baked: {bakeResult.BakedClip.name}");
+                    RetargetApplianceUtil.LogInfo($"Baked clip: {clipInfo.ClipName} -> {bakeResult.SavedAssetPath}");
                 }
                 else
                 {
@@ -194,7 +196,8 @@ namespace RetargetAppliance
             var result = new BakeResult
             {
                 SourceClip = sourceClipInfo.Clip,
-                TargetName = targetName
+                TargetName = targetName,
+                SourceClipName = sourceClipInfo.ClipName
             };
 
             try
@@ -398,8 +401,6 @@ namespace RetargetAppliance
                 // Save the baked clip as an asset
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
                 AssetDatabase.CreateAsset(result.BakedClip, result.SavedAssetPath);
-
-                RetargetApplianceUtil.LogInfo($"Saved baked clip: {result.SavedAssetPath}");
             }
             catch (Exception ex)
             {
