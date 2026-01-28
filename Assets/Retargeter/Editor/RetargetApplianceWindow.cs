@@ -38,6 +38,15 @@ namespace RetargetAppliance
         private bool _stabilizeRightToe = true;
         private bool _stabilizeLeftToe = false;
 
+        // Toe Yaw Correction Settings (advanced, shown in foldout)
+        private bool _enableToeYawCorrection = true;
+        private ToeYawCorrectionMode _toeYawCorrectionMode = ToeYawCorrectionMode.BlendTowardIdentity;
+        private float _maxToeYawDegrees = 10f;
+        private float _toeYawBlendFactor = 0.3f;
+        private bool _correctRightToeYaw = true;
+        private bool _correctLeftToeYaw = true;
+        private bool _showToeYawFoldout = false;
+
         // Manual offset settings (advanced)
         private bool _showVrmAdvancedFoldout = false;
         private VrmCorrectionProfile _vrmCorrectionProfile = VrmCorrectionProfile.VRoidA_Y90;
@@ -472,6 +481,46 @@ namespace RetargetAppliance
                 _stabilizeRightToe = EditorGUILayout.Toggle("Right Toe", _stabilizeRightToe);
                 _stabilizeLeftToe = EditorGUILayout.Toggle("Left Toe", _stabilizeLeftToe);
                 EditorGUI.indentLevel--;
+
+                EditorGUILayout.Space(5);
+
+                // Toe Yaw Correction foldout (advanced settings)
+                _showToeYawFoldout = EditorGUILayout.Foldout(_showToeYawFoldout, "Toe Yaw Correction (Advanced)", true);
+                if (_showToeYawFoldout)
+                {
+                    EditorGUI.indentLevel++;
+
+                    _enableToeYawCorrection = EditorGUILayout.Toggle("Enable Yaw Correction", _enableToeYawCorrection);
+
+                    if (_enableToeYawCorrection)
+                    {
+                        EditorGUILayout.HelpBox(
+                            "Additional toe yaw adjustment. Applied after stabilization to fine-tune foot direction.",
+                            MessageType.None);
+
+                        _toeYawCorrectionMode = (ToeYawCorrectionMode)EditorGUILayout.EnumPopup("Yaw Mode", _toeYawCorrectionMode);
+
+                        if (_toeYawCorrectionMode == ToeYawCorrectionMode.ClampYaw)
+                        {
+                            _maxToeYawDegrees = EditorGUILayout.Slider("Max Yaw Degrees", _maxToeYawDegrees, 0f, 45f);
+                        }
+                        else if (_toeYawCorrectionMode == ToeYawCorrectionMode.BlendTowardIdentity)
+                        {
+                            _toeYawBlendFactor = EditorGUILayout.Slider("Blend Factor", _toeYawBlendFactor, 0f, 1f);
+                        }
+
+                        EditorGUILayout.BeginHorizontal();
+                        _correctRightToeYaw = EditorGUILayout.Toggle("Right", _correctRightToeYaw, GUILayout.Width(60));
+                        _correctLeftToeYaw = EditorGUILayout.Toggle("Left", _correctLeftToeYaw, GUILayout.Width(60));
+                        EditorGUILayout.EndHorizontal();
+                    }
+
+                    EditorGUI.indentLevel--;
+                }
+            }
+            else
+            {
+                EditorGUILayout.LabelField("(Toe yaw correction is also disabled)", EditorStyles.miniLabel);
             }
 
             EditorGUI.indentLevel--;
@@ -496,7 +545,14 @@ namespace RetargetAppliance
                 ToeStabilizationMode = _toeStabilizationMode,
                 ToeRotationStrength = _toeRotationStrength,
                 StabilizeRightToe = _stabilizeRightToe,
-                StabilizeLeftToe = _stabilizeLeftToe
+                StabilizeLeftToe = _stabilizeLeftToe,
+                // Toe yaw correction settings (only active when stabilization is enabled)
+                EnableToeYawCorrection = _enableToeYawCorrection,
+                ToeYawCorrectionMode = _toeYawCorrectionMode,
+                MaxToeYawDegrees = _maxToeYawDegrees,
+                ToeYawBlendFactor = _toeYawBlendFactor,
+                CorrectRightToeYaw = _correctRightToeYaw,
+                CorrectLeftToeYaw = _correctLeftToeYaw
             };
         }
 
@@ -835,6 +891,7 @@ namespace RetargetAppliance
                     }
 
                     // Export each baked clip individually with unique filenames
+                    // CRITICAL: Clone the target for each export to prevent clip contamination
                     foreach (var clipResult in bakeResult.ClipResults)
                     {
                         if (!clipResult.Success || clipResult.BakedClip == null)
@@ -859,48 +916,64 @@ namespace RetargetAppliance
                         // Create a list with just this one clip for export
                         var singleClipList = new List<AnimationClip> { savedClip };
 
-                        if (exportGLB)
-                        {
-                            totalExportsAttempted++;
-                            var glbResult = RetargetApplianceExporter.ExportAsGLB(
-                                bakeResult.TargetInstance,
-                                targetName,
-                                singleClipList,
-                                settings,
-                                exportFileName);
+                        // Log the export operation
+                        RetargetApplianceUtil.LogInfo($"[RetargetAppliance] ExportClip='{sourceClipName}' SourceAsset='{clipResult.SavedAssetPath}'");
 
-                            if (glbResult.Success)
+                        // Create a fresh clone for this export to prevent clip contamination
+                        var exportRoot = Instantiate(bakeResult.TargetInstance);
+                        exportRoot.name = $"{targetName}_Export";
+                        exportRoot.hideFlags = HideFlags.HideAndDontSave;
+
+                        try
+                        {
+                            if (exportGLB)
                             {
-                                glbSuccessCount++;
-                                RetargetApplianceUtil.LogInfo($"Exported GLB: {glbResult.ExportPath}");
+                                totalExportsAttempted++;
+                                var glbResult = RetargetApplianceExporter.ExportAsGLB(
+                                    exportRoot,
+                                    targetName,
+                                    singleClipList,
+                                    settings,
+                                    exportFileName);
+
+                                if (glbResult.Success)
+                                {
+                                    glbSuccessCount++;
+                                    RetargetApplianceUtil.LogInfo($"Exported GLB: {glbResult.ExportPath}");
+                                }
+                                else
+                                {
+                                    glbFailCount++;
+                                    RetargetApplianceUtil.LogError($"GLB export failed for '{exportFileName}': {glbResult.Error}");
+                                }
                             }
-                            else
+
+                            if (exportFBX)
                             {
-                                glbFailCount++;
-                                RetargetApplianceUtil.LogError($"GLB export failed for '{exportFileName}': {glbResult.Error}");
+                                totalExportsAttempted++;
+                                var fbxResult = RetargetApplianceExporter.ExportAsFBX(
+                                    exportRoot,
+                                    targetName,
+                                    singleClipList,
+                                    settings,
+                                    exportFileName);
+
+                                if (fbxResult.Success)
+                                {
+                                    fbxSuccessCount++;
+                                    RetargetApplianceUtil.LogInfo($"Exported FBX: {fbxResult.ExportPath}");
+                                }
+                                else
+                                {
+                                    fbxFailCount++;
+                                    RetargetApplianceUtil.LogError($"FBX export failed for '{exportFileName}': {fbxResult.Error}");
+                                }
                             }
                         }
-
-                        if (exportFBX)
+                        finally
                         {
-                            totalExportsAttempted++;
-                            var fbxResult = RetargetApplianceExporter.ExportAsFBX(
-                                bakeResult.TargetInstance,
-                                targetName,
-                                singleClipList,
-                                settings,
-                                exportFileName);
-
-                            if (fbxResult.Success)
-                            {
-                                fbxSuccessCount++;
-                                RetargetApplianceUtil.LogInfo($"Exported FBX: {fbxResult.ExportPath}");
-                            }
-                            else
-                            {
-                                fbxFailCount++;
-                                RetargetApplianceUtil.LogError($"FBX export failed for '{exportFileName}': {fbxResult.Error}");
-                            }
+                            // Always clean up the export clone
+                            DestroyImmediate(exportRoot);
                         }
                     }
 

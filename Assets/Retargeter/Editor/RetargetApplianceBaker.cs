@@ -253,7 +253,10 @@ namespace RetargetAppliance
                                              settings.VrmCorrections.EnableToeStabilization &&
                                              (settings.VrmCorrections.StabilizeRightToe || settings.VrmCorrections.StabilizeLeftToe);
 
+                // ToeYawCorrection is disabled automatically when ToeStabilization is disabled
+                // This prevents the two systems from fighting each other
                 bool applyToeYawCorrection = settings.VrmCorrections != null &&
+                                             settings.VrmCorrections.EnableToeStabilization && // Must have stabilization enabled
                                              settings.VrmCorrections.EnableToeYawCorrection &&
                                              settings.VrmCorrections.ToeYawCorrectionMode != ToeYawCorrectionMode.None &&
                                              (settings.VrmCorrections.CorrectRightToeYaw || settings.VrmCorrections.CorrectLeftToeYaw);
@@ -262,8 +265,12 @@ namespace RetargetAppliance
                 ToeStabilizationData toeStabilizationData = null;
                 string logPrefix = $"[RetargetAppliance] [{targetName}]";
 
+                // Log toe system configuration once per clip
+                RetargetApplianceUtil.LogInfo($"{logPrefix} ToeSystem: yawCorrection={applyToeYawCorrection} stabilization={applyToeStabilization} strength={(settings.VrmCorrections?.ToeRotationStrength ?? 0f):F2}");
+
                 // Diagnostic tracking for toe stabilization
                 bool toeStabilizationRan = false;
+                bool toeCapturedAfterFootCorrection = false;
 
                 // Sample each frame
                 for (int frame = 0; frame < frameCount; frame++)
@@ -276,15 +283,8 @@ namespace RetargetAppliance
                     clipPlayable.SetTime(time);
                     graph.Evaluate();
 
-                    // STEP 2: Capture toe neutral poses BEFORE foot corrections (first frame only)
-                    // This captures the animation's natural toe pose at t=0
-                    if (applyToeStabilization && toeStabilizationData == null)
-                    {
-                        toeStabilizationData = RetargetApplianceVrmCorrections.CaptureToeNeutralPoses(
-                            animator, settings.VrmCorrections, logPrefix);
-                    }
-
-                    // STEP 3: Apply VRM foot corrections AFTER sampling, BEFORE recording
+                    // STEP 2: Apply VRM foot corrections AFTER sampling
+                    // This MUST happen before capturing toe neutral poses
                     if (applyCorrections)
                     {
                         if (settings.VrmCorrections.AutoFixFootDirection)
@@ -306,6 +306,16 @@ namespace RetargetAppliance
                         }
                     }
 
+                    // STEP 3: Capture toe neutral poses AFTER foot corrections (first frame only)
+                    // This ensures the neutral pose reflects the corrected foot orientation
+                    // Order: FootDirectionCorrection -> CaptureToeNeutral -> ToeStabilization -> ToeYawCorrection
+                    if (applyToeStabilization && toeStabilizationData == null)
+                    {
+                        toeStabilizationData = RetargetApplianceVrmCorrections.CaptureToeNeutralPoses(
+                            animator, settings.VrmCorrections, logPrefix);
+                        toeCapturedAfterFootCorrection = true;
+                    }
+
                     // STEP 4: Apply toe stabilization AFTER foot corrections, BEFORE recording
                     if (applyToeStabilization && toeStabilizationData != null)
                     {
@@ -318,6 +328,7 @@ namespace RetargetAppliance
 
                     // STEP 5: Apply toe yaw correction to ensure foot defines forward direction
                     // This reduces "toe overdrives foot" by clamping or dampening toe yaw
+                    // NOTE: Only runs if ToeStabilization is also enabled (prevents fighting)
                     if (applyToeYawCorrection)
                     {
                         bool debugThisFrame = frame == 0 && settings.VrmCorrections.DebugPrintAlignment;
@@ -374,6 +385,12 @@ namespace RetargetAppliance
 
                 // Apply curves to the clip
                 int toeCurvesWritten = 0;
+                // Track first/last values for RightToes EulerY as verification
+                float? rightToesEulerY_First = null;
+                float? rightToesEulerY_Last = null;
+                float? leftToesEulerY_First = null;
+                float? leftToesEulerY_Last = null;
+
                 foreach (var t in transforms)
                 {
                     if (!settings.IncludeRootMotion && t == targetInstance.transform)
@@ -393,7 +410,9 @@ namespace RetargetAppliance
                     }
 
                     // Track toe curves for diagnostics
-                    bool isToeBone = path.Contains("Toes");
+                    bool isRightToe = path.EndsWith("RightToes") || path.Contains("RightToes/");
+                    bool isLeftToe = path.EndsWith("LeftToes") || path.Contains("LeftToes/");
+                    bool isToeBone = isRightToe || isLeftToe;
 
                     // Position
                     SetCurve(result.BakedClip, path, PositionPropertyX, curves.PosX);
@@ -408,6 +427,22 @@ namespace RetargetAppliance
                     if (isToeBone)
                     {
                         toeCurvesWritten += 6; // 3 position + 3 rotation curves
+
+                        // Capture first/last EulerY values for verification
+                        var eulerYKeys = curves.EulerY.keys;
+                        if (eulerYKeys.Length > 0)
+                        {
+                            if (isRightToe)
+                            {
+                                rightToesEulerY_First = eulerYKeys[0].value;
+                                rightToesEulerY_Last = eulerYKeys[eulerYKeys.Length - 1].value;
+                            }
+                            else if (isLeftToe)
+                            {
+                                leftToesEulerY_First = eulerYKeys[0].value;
+                                leftToesEulerY_Last = eulerYKeys[eulerYKeys.Length - 1].value;
+                            }
+                        }
                     }
                 }
 
@@ -415,8 +450,16 @@ namespace RetargetAppliance
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
                 AssetDatabase.CreateAsset(result.BakedClip, result.SavedAssetPath);
 
-                // Diagnostic logging for toe stabilization
-                RetargetApplianceUtil.LogInfo($"Baked clip {sourceClipInfo.ClipName}: toeCurvesWritten={toeCurvesWritten} toeStabilizationEnabled={applyToeStabilization} toeStabilizationRan={toeStabilizationRan}");
+                // Diagnostic logging for toe stabilization with verification values
+                RetargetApplianceUtil.LogInfo($"{logPrefix} Baked '{sourceClipInfo.ClipName}': toeCurves={toeCurvesWritten} stabilization={applyToeStabilization} ran={toeStabilizationRan} capturedAfterFootFix={toeCapturedAfterFootCorrection}");
+                if (rightToesEulerY_First.HasValue)
+                {
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} RightToes EulerY: first={rightToesEulerY_First.Value:F2} last={rightToesEulerY_Last.Value:F2}");
+                }
+                if (leftToesEulerY_First.HasValue)
+                {
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} LeftToes EulerY: first={leftToesEulerY_First.Value:F2} last={leftToesEulerY_Last.Value:F2}");
+                }
             }
             catch (Exception ex)
             {

@@ -368,6 +368,7 @@ After installation, restart Unity and try again.";
 
         /// <summary>
         /// Attaches baked animation clips to an Animation component for FBX export.
+        /// CRITICAL: Clears ALL existing clips first to prevent contamination.
         /// Returns the list of temporary clip copies for cleanup.
         /// </summary>
         private static List<AnimationClip> AttachClipsForFBXExport(
@@ -387,6 +388,10 @@ After installation, restart Unity and try again.";
             {
                 return tempClips;
             }
+
+            // CRITICAL: Clear ALL existing clips from the Animation component
+            // This prevents clips from previous exports contaminating this export
+            ClearAllAnimationClips(animation);
 
             var clipNames = new List<string>();
             var usedNames = new HashSet<string>();
@@ -446,7 +451,10 @@ After installation, restart Unity and try again.";
             // Configure playback settings
             animation.playAutomatically = false;
 
-            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Attached {tempClips.Count} baked clips for FBX export.");
+            // Log verification of Animation component state
+            int totalClips = CountAnimationClips(animation);
+            string defaultClipName = animation.clip != null ? animation.clip.name : "(null)";
+            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] ExportRoot default clip = '{defaultClipName}' clipsCount={totalClips}");
 
             if (clipNames.Count > 0)
             {
@@ -653,6 +661,7 @@ After installation, restart Unity and try again.";
         /// <summary>
         /// Prepares a target GameObject for GLB export by adding necessary components.
         /// Adds Animation component with legacy clips so UnityGLTF will export them.
+        /// CRITICAL: Clears ALL existing clips to prevent contamination from previous exports.
         /// </summary>
         private static void PrepareTargetForExport(GameObject target, List<AnimationClip> clips)
         {
@@ -669,10 +678,12 @@ After installation, restart Unity and try again.";
                 animation = target.AddComponent<Animation>();
             }
 
-            // Clear existing clips
-            animation.clip = null;
+            // CRITICAL: Clear ALL existing clips from the Animation component
+            // Simply setting animation.clip = null is NOT enough - we must remove all clips
+            ClearAllAnimationClips(animation);
 
             int addedCount = 0;
+            AnimationClip firstClipCopy = null;
 
             // Add all baked clips to the Animation component
             foreach (var clip in clips)
@@ -686,17 +697,68 @@ After installation, restart Unity and try again.";
 
                     animation.AddClip(clipCopy, clip.name);
 
-                    // Set the first clip as the default
-                    if (animation.clip == null)
+                    // Track first clip
+                    if (firstClipCopy == null)
                     {
-                        animation.clip = clipCopy;
+                        firstClipCopy = clipCopy;
                     }
 
                     addedCount++;
                 }
             }
 
-            RetargetApplianceUtil.LogInfo($"Prepared {addedCount} animation clips for export on '{target.name}'");
+            // Set the first clip as the default
+            animation.clip = firstClipCopy;
+
+            // Log verification of Animation component state
+            int totalClips = CountAnimationClips(animation);
+            string defaultClipName = animation.clip != null ? animation.clip.name : "(null)";
+            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] ExportRoot default clip = '{defaultClipName}' clipsCount={totalClips}");
+        }
+
+        /// <summary>
+        /// Clears all clips from an Animation component.
+        /// </summary>
+        private static void ClearAllAnimationClips(Animation animation)
+        {
+            if (animation == null)
+                return;
+
+            // Collect all clip names first (can't modify during enumeration)
+            var clipNames = new List<string>();
+            foreach (AnimationState state in animation)
+            {
+                if (state != null && state.clip != null)
+                {
+                    clipNames.Add(state.clip.name);
+                }
+            }
+
+            // Remove all clips
+            foreach (string clipName in clipNames)
+            {
+                animation.RemoveClip(clipName);
+            }
+
+            // Clear default clip
+            animation.clip = null;
+        }
+
+        /// <summary>
+        /// Counts the number of clips in an Animation component.
+        /// </summary>
+        private static int CountAnimationClips(Animation animation)
+        {
+            if (animation == null)
+                return 0;
+
+            int count = 0;
+            foreach (AnimationState state in animation)
+            {
+                if (state != null)
+                    count++;
+            }
+            return count;
         }
 
         /// <summary>
