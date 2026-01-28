@@ -262,6 +262,9 @@ namespace RetargetAppliance
                 ToeStabilizationData toeStabilizationData = null;
                 string logPrefix = $"[RetargetAppliance] [{targetName}]";
 
+                // Diagnostic tracking for toe stabilization
+                bool toeStabilizationRan = false;
+
                 // Sample each frame
                 for (int frame = 0; frame < frameCount; frame++)
                 {
@@ -306,6 +309,7 @@ namespace RetargetAppliance
                     // STEP 4: Apply toe stabilization AFTER foot corrections, BEFORE recording
                     if (applyToeStabilization && toeStabilizationData != null)
                     {
+                        toeStabilizationRan = true;
                         // Debug output on first frame only when debug enabled
                         bool debugThisFrame = frame == 0 && settings.VrmCorrections.DebugPrintAlignment;
                         RetargetApplianceVrmCorrections.ApplyToeStabilization(
@@ -369,6 +373,7 @@ namespace RetargetAppliance
                 }
 
                 // Apply curves to the clip
+                int toeCurvesWritten = 0;
                 foreach (var t in transforms)
                 {
                     if (!settings.IncludeRootMotion && t == targetInstance.transform)
@@ -387,6 +392,9 @@ namespace RetargetAppliance
                         }
                     }
 
+                    // Track toe curves for diagnostics
+                    bool isToeBone = path.Contains("Toes");
+
                     // Position
                     SetCurve(result.BakedClip, path, PositionPropertyX, curves.PosX);
                     SetCurve(result.BakedClip, path, PositionPropertyY, curves.PosY);
@@ -396,11 +404,19 @@ namespace RetargetAppliance
                     SetCurve(result.BakedClip, path, RotationPropertyX, curves.EulerX);
                     SetCurve(result.BakedClip, path, RotationPropertyY, curves.EulerY);
                     SetCurve(result.BakedClip, path, RotationPropertyZ, curves.EulerZ);
+
+                    if (isToeBone)
+                    {
+                        toeCurvesWritten += 6; // 3 position + 3 rotation curves
+                    }
                 }
 
                 // Save the baked clip as an asset
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
                 AssetDatabase.CreateAsset(result.BakedClip, result.SavedAssetPath);
+
+                // Diagnostic logging for toe stabilization
+                RetargetApplianceUtil.LogInfo($"Baked clip {sourceClipInfo.ClipName}: toeCurvesWritten={toeCurvesWritten} toeStabilizationEnabled={applyToeStabilization} toeStabilizationRan={toeStabilizationRan}");
             }
             catch (Exception ex)
             {
