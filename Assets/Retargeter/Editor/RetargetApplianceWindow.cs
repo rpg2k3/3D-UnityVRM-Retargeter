@@ -792,6 +792,9 @@ namespace RetargetAppliance
                 };
 
                 int totalTargets = _vrmTargets.Count;
+                int totalClipsFound = sourceClips.Count;
+                int totalBakedClips = 0;
+                int totalExportsAttempted = 0;
                 int glbSuccessCount = 0;
                 int glbFailCount = 0;
                 int fbxSuccessCount = 0;
@@ -831,45 +834,71 @@ namespace RetargetAppliance
                         continue;
                     }
 
-                    var bakedClips = RetargetApplianceBaker.GetBakedClips(bakeResult);
-
-                    if (exportGLB)
+                    // Export each baked clip individually with unique filenames
+                    foreach (var clipResult in bakeResult.ClipResults)
                     {
-                        var glbResult = RetargetApplianceExporter.ExportAsGLB(
-                            bakeResult.TargetInstance,
-                            targetName,
-                            bakedClips,
-                            settings);
+                        if (!clipResult.Success || clipResult.BakedClip == null)
+                            continue;
 
-                        if (glbResult.Success)
-                        {
-                            glbSuccessCount++;
-                            RetargetApplianceUtil.LogInfo($"GLB exported: {glbResult.ExportPath}");
-                        }
-                        else
-                        {
-                            glbFailCount++;
-                            RetargetApplianceUtil.LogError($"GLB export failed for '{targetName}': {glbResult.Error}");
-                        }
-                    }
+                        totalBakedClips++;
 
-                    if (exportFBX)
-                    {
-                        var fbxResult = RetargetApplianceExporter.ExportAsFBX(
-                            bakeResult.TargetInstance,
-                            targetName,
-                            bakedClips,
-                            settings);
-
-                        if (fbxResult.Success)
+                        // Load the saved clip from the asset path
+                        var savedClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipResult.SavedAssetPath);
+                        if (savedClip == null)
                         {
-                            fbxSuccessCount++;
-                            RetargetApplianceUtil.LogInfo($"FBX exported: {fbxResult.ExportPath}");
+                            RetargetApplianceUtil.LogWarning($"Could not load baked clip from: {clipResult.SavedAssetPath}");
+                            continue;
                         }
-                        else
+
+                        // Create unique export filename: TargetName__ClipName
+                        string sourceClipName = clipResult.SourceClip != null ? clipResult.SourceClip.name : savedClip.name;
+                        string exportFileName = RetargetApplianceUtil.GetExportFileName(targetName, sourceClipName);
+
+                        // Create a list with just this one clip for export
+                        var singleClipList = new List<AnimationClip> { savedClip };
+
+                        if (exportGLB)
                         {
-                            fbxFailCount++;
-                            RetargetApplianceUtil.LogError($"FBX export failed for '{targetName}': {fbxResult.Error}");
+                            totalExportsAttempted++;
+                            var glbResult = RetargetApplianceExporter.ExportAsGLB(
+                                bakeResult.TargetInstance,
+                                targetName,
+                                singleClipList,
+                                settings,
+                                exportFileName);
+
+                            if (glbResult.Success)
+                            {
+                                glbSuccessCount++;
+                                RetargetApplianceUtil.LogInfo($"GLB exported: {glbResult.ExportPath}");
+                            }
+                            else
+                            {
+                                glbFailCount++;
+                                RetargetApplianceUtil.LogError($"GLB export failed for '{exportFileName}': {glbResult.Error}");
+                            }
+                        }
+
+                        if (exportFBX)
+                        {
+                            totalExportsAttempted++;
+                            var fbxResult = RetargetApplianceExporter.ExportAsFBX(
+                                bakeResult.TargetInstance,
+                                targetName,
+                                singleClipList,
+                                settings,
+                                exportFileName);
+
+                            if (fbxResult.Success)
+                            {
+                                fbxSuccessCount++;
+                                RetargetApplianceUtil.LogInfo($"FBX exported: {fbxResult.ExportPath}");
+                            }
+                            else
+                            {
+                                fbxFailCount++;
+                                RetargetApplianceUtil.LogError($"FBX export failed for '{exportFileName}': {fbxResult.Error}");
+                            }
                         }
                     }
 
@@ -880,14 +909,20 @@ namespace RetargetAppliance
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
-                // Build summary
+                // Build summary with detailed statistics
                 var summaryLines = new List<string>();
                 summaryLines.Add("Bake and Export Complete!\n");
+                summaryLines.Add($"Source clips found: {totalClipsFound}");
+                summaryLines.Add($"Targets processed: {totalTargets}");
+                summaryLines.Add($"Total clips baked: {totalBakedClips}");
+                summaryLines.Add($"Total exports attempted: {totalExportsAttempted}");
 
                 if (bakeFailCount > 0)
                 {
-                    summaryLines.Add($"Bake failures: {bakeFailCount}");
+                    summaryLines.Add($"\nBake failures: {bakeFailCount}");
                 }
+
+                summaryLines.Add("");
 
                 if (exportGLB)
                 {

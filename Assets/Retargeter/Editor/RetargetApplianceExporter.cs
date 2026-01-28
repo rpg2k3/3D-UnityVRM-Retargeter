@@ -158,11 +158,17 @@ After installation, restart Unity and try again.";
         /// <summary>
         /// Exports a target GameObject with baked animations as GLB.
         /// </summary>
+        /// <param name="targetInstance">The GameObject to export.</param>
+        /// <param name="targetName">The target name (used for result tracking).</param>
+        /// <param name="bakedClips">Animation clips to include.</param>
+        /// <param name="settings">Bake settings.</param>
+        /// <param name="outputFileName">Optional custom output filename (without extension). If null, uses targetName.</param>
         public static ExportResult ExportAsGLB(
             GameObject targetInstance,
             string targetName,
             List<AnimationClip> bakedClips,
-            RetargetApplianceBaker.BakeSettings settings)
+            RetargetApplianceBaker.BakeSettings settings,
+            string outputFileName = null)
         {
             var result = new ExportResult
             {
@@ -187,8 +193,8 @@ After installation, restart Unity and try again.";
                 PrepareTargetForExport(targetInstance, bakedClips);
 
                 // Export filename (without extension - SaveGLB adds .glb)
-                string fileName = targetName;
-                result.ExportPath = $"{unityRelativePath}/{targetName}.glb";
+                string fileName = outputFileName ?? targetName;
+                result.ExportPath = $"{unityRelativePath}/{fileName}.glb";
 
                 // Perform export using UnityGLTF directly
                 bool exportSuccess = ExportWithUnityGLTF(targetInstance.transform, exportFolder, fileName, bakedClips);
@@ -219,11 +225,17 @@ After installation, restart Unity and try again.";
         /// <summary>
         /// Exports a target GameObject with baked animations as FBX using reflection.
         /// </summary>
+        /// <param name="targetInstance">The GameObject to export.</param>
+        /// <param name="targetName">The target name (used for result tracking).</param>
+        /// <param name="bakedClips">Animation clips to include.</param>
+        /// <param name="settings">Bake settings.</param>
+        /// <param name="outputFileName">Optional custom output filename (without extension). If null, uses targetName.</param>
         public static ExportResult ExportAsFBX(
             GameObject targetInstance,
             string targetName,
             List<AnimationClip> bakedClips,
-            RetargetApplianceBaker.BakeSettings settings)
+            RetargetApplianceBaker.BakeSettings settings,
+            string outputFileName = null)
         {
             var result = new ExportResult
             {
@@ -283,8 +295,9 @@ After installation, restart Unity and try again.";
                     RetargetApplianceUtil.LogWarning("[RetargetAppliance] No animation clips provided; FBX will export mesh+skeleton only.");
                 }
 
-                // Build the output path
-                string fbxFileName = $"{targetName}.fbx";
+                // Build the output path using custom filename if provided
+                string fileName = outputFileName ?? targetName;
+                string fbxFileName = $"{fileName}.fbx";
                 string absoluteOutPath = Path.Combine(exportFolder, fbxFileName);
                 result.ExportPath = $"{unityRelativePath}/{fbxFileName}";
 
@@ -603,12 +616,19 @@ After installation, restart Unity and try again.";
         /// <summary>
         /// Exports a target in both GLB and FBX formats based on the selected format.
         /// </summary>
+        /// <param name="targetInstance">The GameObject to export.</param>
+        /// <param name="targetName">The target name (used for result tracking).</param>
+        /// <param name="bakedClips">Animation clips to include.</param>
+        /// <param name="settings">Bake settings.</param>
+        /// <param name="format">Export format (GLB, FBX, or Both).</param>
+        /// <param name="outputFileName">Optional custom output filename (without extension). If null, uses targetName.</param>
         public static CombinedExportResult ExportTarget(
             GameObject targetInstance,
             string targetName,
             List<AnimationClip> bakedClips,
             RetargetApplianceBaker.BakeSettings settings,
-            ExportFormat format)
+            ExportFormat format,
+            string outputFileName = null)
         {
             var result = new CombinedExportResult
             {
@@ -618,13 +638,13 @@ After installation, restart Unity and try again.";
             // Export GLB if requested
             if (format == ExportFormat.GLB || format == ExportFormat.Both)
             {
-                result.GLBResult = ExportAsGLB(targetInstance, targetName, bakedClips, settings);
+                result.GLBResult = ExportAsGLB(targetInstance, targetName, bakedClips, settings, outputFileName);
             }
 
             // Export FBX if requested
             if (format == ExportFormat.FBX || format == ExportFormat.Both)
             {
-                result.FBXResult = ExportAsFBX(targetInstance, targetName, bakedClips, settings);
+                result.FBXResult = ExportAsFBX(targetInstance, targetName, bakedClips, settings, outputFileName);
             }
 
             return result;

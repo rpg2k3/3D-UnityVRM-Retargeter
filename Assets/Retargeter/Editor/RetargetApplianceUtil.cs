@@ -178,23 +178,40 @@ namespace RetargetAppliance
 
         /// <summary>
         /// Sanitizes a name to be safe for file paths and asset names.
+        /// Replaces spaces with underscores and removes Windows forbidden characters.
         /// </summary>
         public static string SanitizeName(string name)
         {
             if (string.IsNullOrEmpty(name))
                 return "Unnamed";
 
+            // Replace spaces with underscores
+            name = name.Replace(' ', '_');
+
+            // Remove Windows forbidden filename characters: \ / : * ? " < > |
+            char[] windowsForbidden = new char[] { '\\', '/', ':', '*', '?', '"', '<', '>', '|' };
+            foreach (char c in windowsForbidden)
+            {
+                name = name.Replace(c.ToString(), "");
+            }
+
+            // Also remove any other invalid chars from the system
             char[] invalidChars = Path.GetInvalidFileNameChars();
             foreach (char c in invalidChars)
             {
                 name = name.Replace(c, '_');
             }
 
-            // Also replace some characters that can be problematic
-            name = name.Replace(' ', '_');
-            name = name.Replace('|', '_');
-
             return name;
+        }
+
+        /// <summary>
+        /// Creates an export filename from target name and clip name.
+        /// Format: TargetName__ClipName (sanitized for filenames)
+        /// </summary>
+        public static string GetExportFileName(string targetName, string clipName)
+        {
+            return $"{SanitizeName(targetName)}__{SanitizeName(clipName)}";
         }
 
         /// <summary>
