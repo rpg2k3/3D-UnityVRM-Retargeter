@@ -383,9 +383,19 @@ namespace RetargetAppliance
                     _hasLoggedPropertyNames = true;
                 }
 
+                // Get actual toe transform paths using Animator bone mapping (not string matching)
+                Transform rightToesTransform = animator.GetBoneTransform(HumanBodyBones.RightToes);
+                Transform leftToesTransform = animator.GetBoneTransform(HumanBodyBones.LeftToes);
+                string rightToesPath = rightToesTransform != null
+                    ? RetargetApplianceUtil.GetTransformPath(targetInstance.transform, rightToesTransform)
+                    : null;
+                string leftToesPath = leftToesTransform != null
+                    ? RetargetApplianceUtil.GetTransformPath(targetInstance.transform, leftToesTransform)
+                    : null;
+
                 // Apply curves to the clip
                 int toeCurvesWritten = 0;
-                // Track first/last values for RightToes EulerY as verification
+                // Track first/last values for toe EulerY as verification (using actual toe paths)
                 float? rightToesEulerY_First = null;
                 float? rightToesEulerY_Last = null;
                 float? leftToesEulerY_First = null;
@@ -409,9 +419,9 @@ namespace RetargetAppliance
                         }
                     }
 
-                    // Track toe curves for diagnostics
-                    bool isRightToe = path.EndsWith("RightToes") || path.Contains("RightToes/");
-                    bool isLeftToe = path.EndsWith("LeftToes") || path.Contains("LeftToes/");
+                    // Track toe curves for diagnostics using actual toe paths (not string matching)
+                    bool isRightToe = !string.IsNullOrEmpty(rightToesPath) && path == rightToesPath;
+                    bool isLeftToe = !string.IsNullOrEmpty(leftToesPath) && path == leftToesPath;
                     bool isToeBone = isRightToe || isLeftToe;
 
                     // Position
@@ -450,15 +460,45 @@ namespace RetargetAppliance
                 result.SavedAssetPath = $"{outputFolder}/{bakedClipName}.anim";
                 AssetDatabase.CreateAsset(result.BakedClip, result.SavedAssetPath);
 
-                // Diagnostic logging for toe stabilization with verification values
-                RetargetApplianceUtil.LogInfo($"{logPrefix} Baked '{sourceClipInfo.ClipName}': toeCurves={toeCurvesWritten} stabilization={applyToeStabilization} ran={toeStabilizationRan} capturedAfterFootFix={toeCapturedAfterFootCorrection}");
+                // Query the saved clip for toe binding verification using AnimationUtility
+                var savedClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(result.SavedAssetPath);
+                int toeBindingCount = 0;
+                if (savedClip != null)
+                {
+                    var bindings = AnimationUtility.GetCurveBindings(savedClip);
+                    foreach (var binding in bindings)
+                    {
+                        // Match against actual toe paths (not string matching)
+                        if ((!string.IsNullOrEmpty(rightToesPath) && binding.path == rightToesPath) ||
+                            (!string.IsNullOrEmpty(leftToesPath) && binding.path == leftToesPath))
+                        {
+                            toeBindingCount++;
+                        }
+                    }
+                }
+
+                // Enhanced diagnostic logging for toe stabilization verification
+                float toeStrength = settings.VrmCorrections?.ToeRotationStrength ?? 0f;
+                RetargetApplianceUtil.LogInfo($"{logPrefix} Baked '{sourceClipInfo.ClipName}': toeBindings={toeBindingCount} toeStabilization={applyToeStabilization} strength={toeStrength:F2}");
+
+                // Log actual toe transform paths for verification
+                if (!string.IsNullOrEmpty(rightToesPath))
+                {
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} RightToes path: '{rightToesPath}'");
+                }
+                if (!string.IsNullOrEmpty(leftToesPath))
+                {
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} LeftToes path: '{leftToesPath}'");
+                }
+
+                // Log numeric verification values - these should change when ToeRotationStrength changes
                 if (rightToesEulerY_First.HasValue)
                 {
-                    RetargetApplianceUtil.LogInfo($"{logPrefix} RightToes EulerY: first={rightToesEulerY_First.Value:F2} last={rightToesEulerY_Last.Value:F2}");
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} RightToes EulerY: first={rightToesEulerY_First.Value:F2} last={rightToesEulerY_Last.Value:F2} (strength={toeStrength:F2})");
                 }
                 if (leftToesEulerY_First.HasValue)
                 {
-                    RetargetApplianceUtil.LogInfo($"{logPrefix} LeftToes EulerY: first={leftToesEulerY_First.Value:F2} last={leftToesEulerY_Last.Value:F2}");
+                    RetargetApplianceUtil.LogInfo($"{logPrefix} LeftToes EulerY: first={leftToesEulerY_First.Value:F2} last={leftToesEulerY_Last.Value:F2} (strength={toeStrength:F2})");
                 }
             }
             catch (Exception ex)

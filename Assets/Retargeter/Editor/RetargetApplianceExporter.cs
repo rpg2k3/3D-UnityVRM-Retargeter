@@ -15,6 +15,50 @@ namespace RetargetAppliance
     public static class RetargetApplianceExporter
     {
         /// <summary>
+        /// Temporarily disables the Animator component to prevent it from interfering with export.
+        /// The exporter should only use the Legacy Animation component, not the Animator controller.
+        /// </summary>
+        private sealed class AnimatorExportOverride : IDisposable
+        {
+            private readonly Animator _animator;
+            private readonly bool _originalEnabled;
+            private readonly RuntimeAnimatorController _originalController;
+
+            public AnimatorExportOverride(GameObject target)
+            {
+                _animator = target != null ? target.GetComponent<Animator>() : null;
+
+                if (_animator != null)
+                {
+                    // Store original state
+                    _originalEnabled = _animator.enabled;
+                    _originalController = _animator.runtimeAnimatorController;
+
+                    // Disable animator and clear controller to prevent interference
+                    _animator.enabled = false;
+                    _animator.runtimeAnimatorController = null;
+
+                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] AnimatorExportOverride: disabled Animator (was enabled={_originalEnabled}, controller={((_originalController != null) ? _originalController.name : "null")})");
+                }
+            }
+
+            public bool AnimatorWasEnabled => _originalEnabled;
+            public bool ControllerWasNull => _originalController == null;
+
+            public void Dispose()
+            {
+                if (_animator != null)
+                {
+                    // Restore original state
+                    _animator.runtimeAnimatorController = _originalController;
+                    _animator.enabled = _originalEnabled;
+
+                    RetargetApplianceUtil.LogInfo("[RetargetAppliance] AnimatorExportOverride: restored Animator state");
+                }
+            }
+        }
+
+        /// <summary>
         /// Export format options.
         /// </summary>
         public enum ExportFormat
@@ -189,24 +233,29 @@ After installation, restart Unity and try again.";
                     Directory.CreateDirectory(exportFolder);
                 }
 
-                // Set up the target for export with animation clips
-                PrepareTargetForExport(targetInstance, bakedClips);
-
                 // Export filename (without extension - SaveGLB adds .glb)
                 string fileName = outputFileName ?? targetName;
                 result.ExportPath = $"{unityRelativePath}/{fileName}.glb";
 
-                // Perform export using UnityGLTF directly
-                bool exportSuccess = ExportWithUnityGLTF(targetInstance.transform, exportFolder, fileName, bakedClips);
+                // CRITICAL: Disable Animator during export to prevent it from overriding Legacy Animation
+                using (var animatorOverride = new AnimatorExportOverride(targetInstance))
+                {
+                    // Set up the target for export with animation clips
+                    // This configures the Legacy Animation component with ONLY the intended clip(s)
+                    PrepareTargetForExport(targetInstance, bakedClips);
 
-                if (exportSuccess)
-                {
-                    result.Success = true;
-                    RetargetApplianceUtil.LogInfo($"Exported GLB: {result.ExportPath}");
-                }
-                else
-                {
-                    result.Error = "Export failed. Check console for details.";
+                    // Perform export using UnityGLTF directly
+                    bool exportSuccess = ExportWithUnityGLTF(targetInstance.transform, exportFolder, fileName, bakedClips, animatorOverride);
+
+                    if (exportSuccess)
+                    {
+                        result.Success = true;
+                        RetargetApplianceUtil.LogInfo($"Exported GLB: {result.ExportPath}");
+                    }
+                    else
+                    {
+                        result.Error = "Export failed. Check console for details.";
+                    }
                 }
 
                 // Refresh asset database so Unity sees the new file
@@ -276,48 +325,62 @@ After installation, restart Unity and try again.";
                     Directory.CreateDirectory(exportFolder);
                 }
 
-                // Ensure Animation component exists (required for FBX Exporter to find animations)
-                animation = EnsureLegacyAnimation(targetInstance, out animationWasAdded);
-
-                // Store original default clip if Animation existed before
-                if (!animationWasAdded && animation != null)
-                {
-                    originalDefaultClip = animation.clip;
-                }
-
-                // Attach baked clips if available
-                if (bakedClips != null && bakedClips.Count > 0)
-                {
-                    tempClips = AttachClipsForFBXExport(animation, bakedClips, settings);
-                }
-                else
-                {
-                    RetargetApplianceUtil.LogWarning("[RetargetAppliance] No animation clips provided; FBX will export mesh+skeleton only.");
-                }
-
                 // Build the output path using custom filename if provided
                 string fileName = outputFileName ?? targetName;
                 string fbxFileName = $"{fileName}.fbx";
                 string absoluteOutPath = Path.Combine(exportFolder, fbxFileName);
                 result.ExportPath = $"{unityRelativePath}/{fbxFileName}";
 
-                // Call ModelExporter.ExportObject via reflection
-                bool exportSuccess = ExportWithFBXExporter(absoluteOutPath, targetInstance);
-
-                if (exportSuccess)
+                // CRITICAL: Disable Animator during export to prevent it from overriding Legacy Animation
+                using (var animatorOverride = new AnimatorExportOverride(targetInstance))
                 {
-                    result.Success = true;
-                    int clipCount = tempClips.Count;
-                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] FBX export completed with embedded takes: {result.ExportPath}");
+                    // Ensure Animation component exists (required for FBX Exporter to find animations)
+                    animation = EnsureLegacyAnimation(targetInstance, out animationWasAdded);
 
-                    if (clipCount > 0)
+                    // Store original default clip if Animation existed before
+                    if (!animationWasAdded && animation != null)
                     {
-                        RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Exported {clipCount} animation take(s) to FBX.");
+                        originalDefaultClip = animation.clip;
                     }
-                }
-                else
-                {
-                    result.Error = "FBX export failed. Check console for details.";
+
+                    // Attach baked clips if available
+                    if (bakedClips != null && bakedClips.Count > 0)
+                    {
+                        tempClips = AttachClipsForFBXExport(animation, bakedClips, settings);
+
+                        // Force the Animation component to use the intended clip
+                        if (tempClips.Count > 0 && animation != null)
+                        {
+                            animation.clip = tempClips[0];
+                            animation.Play(animation.clip.name);
+                            animation.Sample();
+
+                            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] FBX exporting using Legacy Animation default clip: {animation.clip.name}, animatorEnabled={animatorOverride.AnimatorWasEnabled}, controllerNull={animatorOverride.ControllerWasNull}");
+                        }
+                    }
+                    else
+                    {
+                        RetargetApplianceUtil.LogWarning("[RetargetAppliance] No animation clips provided; FBX will export mesh+skeleton only.");
+                    }
+
+                    // Call ModelExporter.ExportObject via reflection
+                    bool exportSuccess = ExportWithFBXExporter(absoluteOutPath, targetInstance);
+
+                    if (exportSuccess)
+                    {
+                        result.Success = true;
+                        int clipCount = tempClips.Count;
+                        RetargetApplianceUtil.LogInfo($"[RetargetAppliance] FBX export completed with embedded takes: {result.ExportPath}");
+
+                        if (clipCount > 0)
+                        {
+                            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Exported {clipCount} animation take(s) to FBX.");
+                        }
+                    }
+                    else
+                    {
+                        result.Error = "FBX export failed. Check console for details.";
+                    }
                 }
 
                 AssetDatabase.Refresh();
@@ -710,10 +773,19 @@ After installation, restart Unity and try again.";
             // Set the first clip as the default
             animation.clip = firstClipCopy;
 
+            // CRITICAL: Force Animation component to use this clip by playing and sampling
+            // This ensures the exporter sees the correct animation state
+            if (firstClipCopy != null)
+            {
+                animation.playAutomatically = false;
+                animation.Play(firstClipCopy.name);
+                animation.Sample();
+            }
+
             // Log verification of Animation component state
             int totalClips = CountAnimationClips(animation);
             string defaultClipName = animation.clip != null ? animation.clip.name : "(null)";
-            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] ExportRoot default clip = '{defaultClipName}' clipsCount={totalClips}");
+            RetargetApplianceUtil.LogInfo($"[RetargetAppliance] PrepareTargetForExport: default clip = '{defaultClipName}' clipsCount={totalClips}");
         }
 
         /// <summary>
@@ -764,7 +836,7 @@ After installation, restart Unity and try again.";
         /// <summary>
         /// Performs the actual GLB export using UnityGLTF's GLTFSceneExporter directly.
         /// </summary>
-        private static bool ExportWithUnityGLTF(Transform rootTransform, string exportFolder, string fileName, List<AnimationClip> clips)
+        private static bool ExportWithUnityGLTF(Transform rootTransform, string exportFolder, string fileName, List<AnimationClip> clips, AnimatorExportOverride animatorOverride = null)
         {
             try
             {
@@ -779,6 +851,14 @@ After installation, restart Unity and try again.";
 
                 try
                 {
+                    // Log the Legacy Animation state before export
+                    var animation = rootTransform.GetComponent<Animation>();
+                    string defaultClipName = (animation != null && animation.clip != null) ? animation.clip.name : "(null)";
+                    bool animatorEnabled = animatorOverride != null ? animatorOverride.AnimatorWasEnabled : false;
+                    bool controllerNull = animatorOverride != null ? animatorOverride.ControllerWasNull : true;
+
+                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] GLB exporting using Legacy Animation default clip: {defaultClipName}, animatorEnabled={animatorEnabled}, controllerNull={controllerNull}");
+
                     // Create export context with settings
                     var exportContext = new ExportContext(gltfSettings);
 
