@@ -23,6 +23,7 @@ namespace RetargetAppliance
         private bool _includeRootMotion = false;
         private float _exportScale = 1f;
         private RetargetApplianceExporter.ExportFormat _exportFormat = RetargetApplianceExporter.ExportFormat.Both;
+        private bool _exportVrma = true; // VRMA export enabled by default
 
         // VRM Correction Settings (simplified)
         private bool _enableVrmCorrections = true;
@@ -46,6 +47,17 @@ namespace RetargetAppliance
         private bool _correctRightToeYaw = true;
         private bool _correctLeftToeYaw = true;
         private bool _showToeYawFoldout = false;
+
+        // Foot Stabilization Settings (pitch/roll control)
+        private bool _enableFootStabilization = true;
+        private bool _applyRightFoot = true;
+        private bool _applyLeftFoot = true;
+        private FootStabilizationAxisMode _footPitchMode = FootStabilizationAxisMode.Clamp;
+        private FootStabilizationAxisMode _footRollMode = FootStabilizationAxisMode.Dampen;
+        private float _pitchClampDeg = 25f;
+        private float _rollClampDeg = 15f;
+        private float _footDampenStrength = 0.35f;
+        private bool _showFootStabilizationFoldout = true;
 
         // Manual offset settings (advanced)
         private bool _showVrmAdvancedFoldout = false;
@@ -162,6 +174,12 @@ namespace RetargetAppliance
             var fbxStatusStyle = new GUIStyle(EditorStyles.miniLabel);
             fbxStatusStyle.normal.textColor = hasFBXExporter ? Color.green : Color.red;
             EditorGUILayout.LabelField(hasFBXExporter ? "FBX: OK" : "FBX: Missing", fbxStatusStyle, GUILayout.Width(70));
+
+            // VRMA Exporter status
+            bool hasVrmaExporter = RetargetApplianceVrmaExporter.IsVrmaExportAvailable();
+            var vrmaStatusStyle = new GUIStyle(EditorStyles.miniLabel);
+            vrmaStatusStyle.normal.textColor = hasVrmaExporter ? Color.green : Color.yellow;
+            EditorGUILayout.LabelField(hasVrmaExporter ? "VRMA: OK" : "VRMA: N/A", vrmaStatusStyle, GUILayout.Width(70));
 
             EditorGUILayout.EndHorizontal();
         }
@@ -303,6 +321,26 @@ namespace RetargetAppliance
                     }
                 }
 
+                EditorGUILayout.Space(5);
+
+                // VRMA Export toggle
+                EditorGUILayout.BeginHorizontal();
+                _exportVrma = EditorGUILayout.Toggle("Export VRMA", _exportVrma);
+                if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                {
+                    var warningStyle = new GUIStyle(EditorStyles.miniLabel);
+                    warningStyle.normal.textColor = Color.yellow;
+                    EditorGUILayout.LabelField("(AnimationClipToVrma not found)", warningStyle);
+                }
+                EditorGUILayout.EndHorizontal();
+
+                if (_exportVrma)
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.LabelField($"Output: {RetargetApplianceVrmaExporter.OutputVrmaPath}/", EditorStyles.miniLabel);
+                    EditorGUI.indentLevel--;
+                }
+
                 EditorGUILayout.Space(10);
 
                 // VRM Bone Corrections Section
@@ -340,6 +378,11 @@ namespace RetargetAppliance
 
                 // Debug toggle
                 _debugPrintAlignment = EditorGUILayout.Toggle("Debug: Print Alignment", _debugPrintAlignment);
+
+                EditorGUILayout.Space(10);
+
+                // Foot Stabilization Section (pitch/roll control)
+                DrawFootStabilizationSection();
 
                 EditorGUILayout.Space(10);
 
@@ -526,6 +569,73 @@ namespace RetargetAppliance
             EditorGUI.indentLevel--;
         }
 
+        private void DrawFootStabilizationSection()
+        {
+            _showFootStabilizationFoldout = EditorGUILayout.Foldout(_showFootStabilizationFoldout, "Foot Stabilization (Pitch/Roll)", true);
+
+            if (!_showFootStabilizationFoldout)
+                return;
+
+            EditorGUI.indentLevel++;
+
+            _enableFootStabilization = EditorGUILayout.Toggle("Enable Foot Stabilization", _enableFootStabilization);
+
+            if (_enableFootStabilization)
+            {
+                EditorGUILayout.HelpBox(
+                    "Reduces excessive foot pitch (up/down) and roll (in/out) tilting in baked animations. " +
+                    "Useful when the source animation has too much foot rotation.",
+                    MessageType.Info);
+
+                EditorGUILayout.Space(3);
+
+                // Apply to toggles
+                EditorGUILayout.LabelField("Apply To:", EditorStyles.miniBoldLabel);
+                EditorGUI.indentLevel++;
+                _applyRightFoot = EditorGUILayout.Toggle("Right Foot", _applyRightFoot);
+                _applyLeftFoot = EditorGUILayout.Toggle("Left Foot", _applyLeftFoot);
+                EditorGUI.indentLevel--;
+
+                EditorGUILayout.Space(5);
+
+                // Pitch mode
+                EditorGUILayout.LabelField("Pitch (Up/Down Tilt):", EditorStyles.miniBoldLabel);
+                EditorGUI.indentLevel++;
+                _footPitchMode = (FootStabilizationAxisMode)EditorGUILayout.EnumPopup("Mode", _footPitchMode);
+                if (_footPitchMode == FootStabilizationAxisMode.Clamp)
+                {
+                    _pitchClampDeg = EditorGUILayout.Slider("Max Pitch (deg)", _pitchClampDeg, 5f, 60f);
+                }
+                EditorGUI.indentLevel--;
+
+                EditorGUILayout.Space(3);
+
+                // Roll mode
+                EditorGUILayout.LabelField("Roll (In/Out Tilt):", EditorStyles.miniBoldLabel);
+                EditorGUI.indentLevel++;
+                _footRollMode = (FootStabilizationAxisMode)EditorGUILayout.EnumPopup("Mode", _footRollMode);
+                if (_footRollMode == FootStabilizationAxisMode.Clamp)
+                {
+                    _rollClampDeg = EditorGUILayout.Slider("Max Roll (deg)", _rollClampDeg, 5f, 45f);
+                }
+                EditorGUI.indentLevel--;
+
+                EditorGUILayout.Space(3);
+
+                // Dampen strength (only show if either mode is Dampen)
+                if (_footPitchMode == FootStabilizationAxisMode.Dampen || _footRollMode == FootStabilizationAxisMode.Dampen)
+                {
+                    EditorGUILayout.LabelField("Dampen Settings:", EditorStyles.miniBoldLabel);
+                    EditorGUI.indentLevel++;
+                    _footDampenStrength = EditorGUILayout.Slider("Dampen Strength", _footDampenStrength, 0f, 1f);
+                    EditorGUILayout.LabelField("(0 = no change, 1 = fully neutral)", EditorStyles.miniLabel);
+                    EditorGUI.indentLevel--;
+                }
+            }
+
+            EditorGUI.indentLevel--;
+        }
+
         private VrmCorrectionSettings CreateVrmCorrectionSettings()
         {
             return new VrmCorrectionSettings
@@ -552,7 +662,16 @@ namespace RetargetAppliance
                 MaxToeYawDegrees = _maxToeYawDegrees,
                 ToeYawBlendFactor = _toeYawBlendFactor,
                 CorrectRightToeYaw = _correctRightToeYaw,
-                CorrectLeftToeYaw = _correctLeftToeYaw
+                CorrectLeftToeYaw = _correctLeftToeYaw,
+                // Foot stabilization settings (pitch/roll control)
+                EnableFootStabilization = _enableFootStabilization,
+                ApplyRightFoot = _applyRightFoot,
+                ApplyLeftFoot = _applyLeftFoot,
+                FootPitchMode = _footPitchMode,
+                FootRollMode = _footRollMode,
+                PitchClampDeg = _pitchClampDeg,
+                RollClampDeg = _rollClampDeg,
+                FootDampenStrength = _footDampenStrength
             };
         }
 
@@ -627,6 +746,11 @@ namespace RetargetAppliance
             {
                 RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputExportPath);
                 EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputExportPath);
+            }
+            if (GUILayout.Button("Open VRMA Folder"))
+            {
+                RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaExporter.OutputVrmaPath);
+                EditorUtility.RevealInFinder(RetargetApplianceVrmaExporter.OutputVrmaPath);
             }
             EditorGUILayout.EndHorizontal();
 
@@ -801,6 +925,20 @@ namespace RetargetAppliance
                 }
             }
 
+            // Check VRMA exporter
+            if (_exportVrma)
+            {
+                if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                {
+                    messages.Add("WARNING: VRMA export enabled but AnimationClipToVrma not installed. VRMA export will be skipped.");
+                    hasWarnings = true;
+                }
+                else
+                {
+                    messages.Add("VRMA Exporter: OK");
+                }
+            }
+
             // Set validation state
             _validationMessage = string.Join("\n", messages);
             _isValidated = true;
@@ -855,10 +993,19 @@ namespace RetargetAppliance
                 int glbFailCount = 0;
                 int fbxSuccessCount = 0;
                 int fbxFailCount = 0;
+                int vrmaSuccessCount = 0;
+                int vrmaFailCount = 0;
                 int bakeFailCount = 0;
 
                 bool exportGLB = _exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
                 bool exportFBX = _exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
+                bool exportVRMA = _exportVrma && RetargetApplianceVrmaExporter.IsVrmaExportAvailable();
+
+                // Log VRMA status at start
+                if (_exportVrma && !RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                {
+                    RetargetApplianceUtil.LogWarning("VRMA export enabled but API not available. VRMA files will not be exported.");
+                }
 
                 for (int i = 0; i < _vrmTargets.Count; i++)
                 {
@@ -969,6 +1116,25 @@ namespace RetargetAppliance
                                     RetargetApplianceUtil.LogError($"FBX export failed for '{exportFileName}': {fbxResult.Error}");
                                 }
                             }
+
+                            // VRMA Export - uses original prefab, not export clone
+                            if (exportVRMA)
+                            {
+                                totalExportsAttempted++;
+                                RetargetApplianceVrmaExporter.EnsureVrmaOutputFolder(targetName);
+                                string vrmaOutPath = RetargetApplianceVrmaExporter.GetVrmaOutputPath(targetName, sourceClipName);
+
+                                if (RetargetApplianceVrmaExporter.TryExportVrma(bakeResult.TargetInstance, savedClip, vrmaOutPath, out string vrmaError))
+                                {
+                                    vrmaSuccessCount++;
+                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] VRMA export: {targetName}__{sourceClipName} -> {vrmaOutPath} (OK)");
+                                }
+                                else
+                                {
+                                    vrmaFailCount++;
+                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] VRMA export failed: {vrmaError}");
+                                }
+                            }
                         }
                         finally
                         {
@@ -1009,7 +1175,16 @@ namespace RetargetAppliance
                     summaryLines.Add($"FBX: {fbxSuccessCount} successful, {fbxFailCount} failed");
                 }
 
+                if (exportVRMA)
+                {
+                    summaryLines.Add($"VRMA: {vrmaSuccessCount} successful, {vrmaFailCount} failed");
+                }
+
                 summaryLines.Add($"\nOutput: {RetargetApplianceUtil.OutputExportPath}");
+                if (exportVRMA && vrmaSuccessCount > 0)
+                {
+                    summaryLines.Add($"VRMA: {RetargetApplianceVrmaExporter.OutputVrmaPath}");
+                }
 
                 string summary = string.Join("\n", summaryLines);
                 EditorUtility.DisplayDialog("Complete", summary, "OK");
