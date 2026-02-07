@@ -207,12 +207,14 @@ After installation, restart Unity and try again.";
         /// <param name="bakedClips">Animation clips to include.</param>
         /// <param name="settings">Bake settings.</param>
         /// <param name="outputFileName">Optional custom output filename (without extension). If null, uses targetName.</param>
+        /// <param name="outputFolder">Optional Unity-relative output folder. If null, defaults to OutputExportPath.</param>
         public static ExportResult ExportAsGLB(
             GameObject targetInstance,
             string targetName,
             List<AnimationClip> bakedClips,
             RetargetApplianceBaker.BakeSettings settings,
-            string outputFileName = null)
+            string outputFileName = null,
+            string outputFolder = null)
         {
             var result = new ExportResult
             {
@@ -222,7 +224,7 @@ After installation, restart Unity and try again.";
             try
             {
                 // Ensure export folder exists (convert Unity-relative path to absolute)
-                string unityRelativePath = RetargetApplianceUtil.OutputExportPath;
+                string unityRelativePath = outputFolder ?? RetargetApplianceUtil.OutputExportPath;
                 RetargetApplianceUtil.EnsureFolderExists(unityRelativePath);
 
                 string exportFolder = Path.GetFullPath(unityRelativePath);
@@ -858,6 +860,19 @@ After installation, restart Unity and try again.";
                     bool controllerNull = animatorOverride != null ? animatorOverride.ControllerWasNull : true;
 
                     RetargetApplianceUtil.LogInfo($"[RetargetAppliance] GLB exporting using Legacy Animation default clip: {defaultClipName}, animatorEnabled={animatorEnabled}, controllerNull={controllerNull}");
+
+                    // Sanity check: warn if any renderer has extreme bounds that
+                    // would cause 3D viewer auto-framing to misbehave
+                    foreach (var renderer in rootTransform.GetComponentsInChildren<Renderer>())
+                    {
+                        if (renderer.bounds.size.magnitude > 100f)
+                        {
+                            RetargetApplianceUtil.LogWarning(
+                                $"[Export] Renderer '{renderer.name}' has large bounds: " +
+                                $"size={renderer.bounds.size} (magnitude={renderer.bounds.size.magnitude:F1}). " +
+                                $"This may cause viewer framing issues.");
+                        }
+                    }
 
                     // Create export context with settings
                     var exportContext = new ExportContext(gltfSettings);

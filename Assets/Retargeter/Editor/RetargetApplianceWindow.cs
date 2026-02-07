@@ -22,8 +22,19 @@ namespace RetargetAppliance
         private int _bakeFPS = 30;
         private bool _includeRootMotion = false;
         private float _exportScale = 1f;
+
+        // VRMA-first pipeline settings (new defaults)
+        private bool _exportVrmaLibrary = true;     // Export VRMA library (default ON)
+        private bool _exportGlbFromVrma = true;     // Export GLB via VRMA round-trip (default ON)
+
+        // Legacy mode toggle (safety rollback)
+        private bool _legacyMode = false;           // Legacy Mode (debug) - default OFF
+        private bool _showLegacyFoldout = false;    // UI foldout for legacy settings
+
+        // Legacy export settings (only used when _legacyMode = true)
         private RetargetApplianceExporter.ExportFormat _exportFormat = RetargetApplianceExporter.ExportFormat.Both;
-        private bool _exportVrma = true; // VRMA export enabled by default
+        private bool _exportVrma = true;
+        private bool _exportGlbViaVrmaRoundTrip = false;
 
         // VRM Correction Settings (simplified)
         private bool _enableVrmCorrections = true;
@@ -32,15 +43,15 @@ namespace RetargetAppliance
         private bool _correctToes = true;
         private bool _debugPrintAlignment = false;
 
-        // Toe Stabilization Settings
-        private bool _enableToeStabilization = true;
+        // Toe Stabilization Settings (VRMA pipeline: OFF by default)
+        private bool _enableToeStabilization = false;
         private ToeStabilizationMode _toeStabilizationMode = ToeStabilizationMode.DampenRotation;
         private float _toeRotationStrength = 0.25f;
         private bool _stabilizeRightToe = true;
         private bool _stabilizeLeftToe = false;
 
-        // Toe Yaw Correction Settings (advanced, shown in foldout)
-        private bool _enableToeYawCorrection = true;
+        // Toe Yaw Correction Settings (VRMA pipeline: OFF by default)
+        private bool _enableToeYawCorrection = false;
         private ToeYawCorrectionMode _toeYawCorrectionMode = ToeYawCorrectionMode.BlendTowardIdentity;
         private float _maxToeYawDegrees = 10f;
         private float _toeYawBlendFactor = 0.3f;
@@ -48,8 +59,8 @@ namespace RetargetAppliance
         private bool _correctLeftToeYaw = true;
         private bool _showToeYawFoldout = false;
 
-        // Foot Stabilization Settings (pitch/roll control)
-        private bool _enableFootStabilization = true;
+        // Foot Stabilization Settings (VRMA pipeline: OFF by default)
+        private bool _enableFootStabilization = false;
         private bool _applyRightFoot = true;
         private bool _applyLeftFoot = true;
         private FootStabilizationAxisMode _footPitchMode = FootStabilizationAxisMode.Clamp;
@@ -57,7 +68,10 @@ namespace RetargetAppliance
         private float _pitchClampDeg = 25f;
         private float _rollClampDeg = 15f;
         private float _footDampenStrength = 0.35f;
-        private bool _showFootStabilizationFoldout = true;
+        private bool _showFootStabilizationFoldout = false;
+
+        // Advanced (Legacy Fixes) foldout - collapsed by default
+        private bool _showAdvancedLegacyFixesFoldout = false;
 
         // Manual offset settings (advanced)
         private bool _showVrmAdvancedFoldout = false;
@@ -117,7 +131,7 @@ namespace RetargetAppliance
 
             // Header
             EditorGUILayout.LabelField("Retarget Appliance", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Bake Mixamo animations onto VRM models and export as GLB/FBX", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("VRMA-first pipeline: Mixamo FBX -> VRMA library -> GLB output", EditorStyles.miniLabel);
 
             EditorGUILayout.Space(10);
 
@@ -303,48 +317,118 @@ namespace RetargetAppliance
 
                 EditorGUILayout.Space(5);
 
-                _exportFormat = (RetargetApplianceExporter.ExportFormat)EditorGUILayout.EnumPopup("Export Format", _exportFormat);
-
-                // Show warnings for missing exporters
-                if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                // VRMA-first pipeline UI (default)
+                if (!_legacyMode)
                 {
+                    EditorGUILayout.LabelField("VRMA Pipeline Output", EditorStyles.boldLabel);
+
+                    // VRMA Library export toggle
+                    EditorGUILayout.BeginHorizontal();
+                    _exportVrmaLibrary = EditorGUILayout.Toggle("Export VRMA library", _exportVrmaLibrary);
+                    if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                    {
+                        var warningStyle = new GUIStyle(EditorStyles.miniLabel);
+                        warningStyle.normal.textColor = Color.yellow;
+                        EditorGUILayout.LabelField("(AnimationClipToVrma not found)", warningStyle);
+                    }
+                    EditorGUILayout.EndHorizontal();
+
+                    if (_exportVrmaLibrary)
+                    {
+                        EditorGUILayout.LabelField($"  Output: Assets/Output/VRMA/<Target>/<Target>__<Clip>.vrma", EditorStyles.miniLabel);
+                    }
+
+                    // GLB export toggle
+                    EditorGUILayout.BeginHorizontal();
+                    _exportGlbFromVrma = EditorGUILayout.Toggle("Export GLB", _exportGlbFromVrma);
                     if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
                     {
-                        EditorGUILayout.HelpBox("UnityGLTF not installed. GLB export will fail.", MessageType.Warning);
+                        var warningStyle = new GUIStyle(EditorStyles.miniLabel);
+                        warningStyle.normal.textColor = Color.yellow;
+                        EditorGUILayout.LabelField("(UnityGLTF not found)", warningStyle);
                     }
-                }
-                if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
-                {
-                    if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                    EditorGUILayout.EndHorizontal();
+
+                    if (_exportGlbFromVrma)
                     {
-                        EditorGUILayout.HelpBox("FBX Exporter not installed. FBX export will fail.", MessageType.Warning);
+                        EditorGUILayout.LabelField($"  Output: Assets/Output/GLB/<Target>/<Target>__<Clip>.glb", EditorStyles.miniLabel);
                     }
+
+                    // GLB export works independently of VRMA in VRMA-first pipeline
                 }
-
-                EditorGUILayout.Space(5);
-
-                // VRMA Export toggle
-                EditorGUILayout.BeginHorizontal();
-                _exportVrma = EditorGUILayout.Toggle("Export VRMA", _exportVrma);
-                if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                else
                 {
-                    var warningStyle = new GUIStyle(EditorStyles.miniLabel);
-                    warningStyle.normal.textColor = Color.yellow;
-                    EditorGUILayout.LabelField("(AnimationClipToVrma not found)", warningStyle);
-                }
-                EditorGUILayout.EndHorizontal();
+                    // Legacy export UI (only shown when legacyMode = true)
+                    EditorGUILayout.LabelField("Legacy Export Format", EditorStyles.boldLabel);
 
-                if (_exportVrma)
-                {
-                    EditorGUI.indentLevel++;
-                    EditorGUILayout.LabelField($"Output: {RetargetApplianceVrmaExporter.OutputVrmaPath}/", EditorStyles.miniLabel);
-                    EditorGUI.indentLevel--;
+                    _exportFormat = (RetargetApplianceExporter.ExportFormat)EditorGUILayout.EnumPopup("Export Format", _exportFormat);
+
+                    // Show warnings for missing exporters
+                    if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                    {
+                        if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                        {
+                            EditorGUILayout.HelpBox("UnityGLTF not installed. GLB export will fail.", MessageType.Warning);
+                        }
+                    }
+                    if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+                    {
+                        if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                        {
+                            EditorGUILayout.HelpBox("FBX Exporter not installed. FBX export will fail.", MessageType.Warning);
+                        }
+                    }
+
+                    EditorGUILayout.Space(5);
+
+                    // VRMA Export toggle (legacy)
+                    EditorGUILayout.BeginHorizontal();
+                    _exportVrma = EditorGUILayout.Toggle("Export VRMA", _exportVrma);
+                    if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                    {
+                        var warningStyle = new GUIStyle(EditorStyles.miniLabel);
+                        warningStyle.normal.textColor = Color.yellow;
+                        EditorGUILayout.LabelField("(AnimationClipToVrma not found)", warningStyle);
+                    }
+                    EditorGUILayout.EndHorizontal();
+
+                    if (_exportVrma)
+                    {
+                        EditorGUI.indentLevel++;
+                        EditorGUILayout.LabelField($"Output: {RetargetApplianceVrmaExporter.OutputVrmaPath}/", EditorStyles.miniLabel);
+
+                        // VRMA Round-trip GLB export option
+                        EditorGUILayout.BeginHorizontal();
+                        _exportGlbViaVrmaRoundTrip = EditorGUILayout.Toggle("Export GLB from VRMA (round-trip)", _exportGlbViaVrmaRoundTrip);
+                        EditorGUILayout.EndHorizontal();
+
+                        if (_exportGlbViaVrmaRoundTrip)
+                        {
+                            EditorGUILayout.LabelField($"  GLB Output: {RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath}/", EditorStyles.miniLabel);
+                        }
+
+                        EditorGUI.indentLevel--;
+                    }
                 }
 
                 EditorGUILayout.Space(10);
 
                 // VRM Bone Corrections Section
                 DrawVrmCorrectionsSection();
+
+                // Legacy Mode toggle at bottom of settings (safety rollback)
+                EditorGUILayout.Space(10);
+                _showLegacyFoldout = EditorGUILayout.Foldout(_showLegacyFoldout, "Legacy Mode (debug)", true);
+                if (_showLegacyFoldout)
+                {
+                    EditorGUI.indentLevel++;
+                    _legacyMode = EditorGUILayout.Toggle("Enable Legacy Mode", _legacyMode);
+                    EditorGUILayout.HelpBox(
+                        "Legacy Mode re-enables old export toggles (GLB/FBX) and foot/toe fixes UI.\n" +
+                        "Keep OFF for VRMA-first pipeline.",
+                        MessageType.None);
+                    EditorGUI.indentLevel--;
+                }
 
                 EditorGUI.indentLevel--;
             }
@@ -381,17 +465,35 @@ namespace RetargetAppliance
 
                 EditorGUILayout.Space(10);
 
-                // Foot Stabilization Section (pitch/roll control)
-                DrawFootStabilizationSection();
+                // Advanced (Legacy Fixes) foldout - contains toe/foot stabilization
+                // These are OFF by default in VRMA pipeline
+                _showAdvancedLegacyFixesFoldout = EditorGUILayout.Foldout(_showAdvancedLegacyFixesFoldout, "Advanced (Legacy Fixes)", true);
 
-                EditorGUILayout.Space(10);
+                if (_showAdvancedLegacyFixesFoldout)
+                {
+                    EditorGUI.indentLevel++;
 
-                // Toe Stabilization Section
-                DrawToeStabilizationSection();
+                    // Note about legacy fixes
+                    EditorGUILayout.HelpBox(
+                        "Legacy fixes OFF by default in VRMA pipeline. Only enable if you see specific issues.",
+                        MessageType.None);
+
+                    EditorGUILayout.Space(5);
+
+                    // Foot Stabilization Section (pitch/roll control)
+                    DrawFootStabilizationSection();
+
+                    EditorGUILayout.Space(10);
+
+                    // Toe Stabilization Section
+                    DrawToeStabilizationSection();
+
+                    EditorGUI.indentLevel--;
+                }
 
                 EditorGUILayout.Space(5);
 
-                // Advanced/Manual foldout
+                // Advanced/Manual foldout for VRM corrections
                 _showVrmAdvancedFoldout = EditorGUILayout.Foldout(_showVrmAdvancedFoldout, "VRM Corrections (Advanced)", true);
 
                 if (_showVrmAdvancedFoldout)
@@ -717,14 +819,34 @@ namespace RetargetAppliance
             {
                 if (CheckExporterAvailability())
                 {
-                    string exportFormatText = _exportFormat == RetargetApplianceExporter.ExportFormat.Both ? "GLB and FBX" : _exportFormat.ToString();
-                    if (EditorUtility.DisplayDialog(
-                        "Bake and Export",
-                        $"This will:\n" +
-                        $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
-                        $"- Export each target as {exportFormatText}\n\n" +
-                        $"Continue?",
-                        "Yes", "Cancel"))
+                    string dialogMessage;
+                    if (!_legacyMode)
+                    {
+                        // VRMA-first pipeline message
+                        var outputs = new List<string>();
+                        if (_exportVrmaLibrary) outputs.Add("VRMA library");
+                        if (_exportGlbFromVrma) outputs.Add("GLB");
+                        string outputsText = outputs.Count > 0 ? string.Join(" + ", outputs) : "Bake only";
+
+                        dialogMessage = $"VRMA-first Pipeline:\n" +
+                            $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
+                            $"- Export: {outputsText}\n\n" +
+                            $"Output paths:\n" +
+                            $"  VRMA: Assets/Output/VRMA/<Target>/\n" +
+                            $"  GLB: Assets/Output/GLB/<Target>/\n\n" +
+                            $"Continue?";
+                    }
+                    else
+                    {
+                        // Legacy pipeline message
+                        string exportFormatText = _exportFormat == RetargetApplianceExporter.ExportFormat.Both ? "GLB and FBX" : _exportFormat.ToString();
+                        dialogMessage = $"Legacy Mode:\n" +
+                            $"- Bake {_fbxAnimations.Count} animation(s) onto {_vrmTargets.Count} target(s)\n" +
+                            $"- Export each target as {exportFormatText}\n\n" +
+                            $"Continue?";
+                    }
+
+                    if (EditorUtility.DisplayDialog("Bake and Export", dialogMessage, "Yes", "Cancel"))
                     {
                         PerformBakeAndExport();
                     }
@@ -737,22 +859,60 @@ namespace RetargetAppliance
 
             // Output folder buttons
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Open Prefabs Folder"))
+
+            if (_legacyMode)
             {
-                RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputPrefabsPath);
-                EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputPrefabsPath);
+                // Legacy mode: show old folder buttons
+                if (GUILayout.Button("Open Prefabs Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputPrefabsPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputPrefabsPath);
+                }
+                if (GUILayout.Button("Open Export Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputExportPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputExportPath);
+                }
+                if (GUILayout.Button("Open VRMA Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaExporter.OutputVrmaPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceVrmaExporter.OutputVrmaPath);
+                }
             }
-            if (GUILayout.Button("Open Export Folder"))
+            else
             {
-                RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputExportPath);
-                EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputExportPath);
+                // VRMA-first pipeline: show VRMA and GLB folders
+                if (GUILayout.Button("Open VRMA Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaExporter.OutputVrmaPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceVrmaExporter.OutputVrmaPath);
+                }
+                if (GUILayout.Button("Open GLB Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath);
+                }
+                if (GUILayout.Button("Open Prefabs Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceUtil.OutputPrefabsPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceUtil.OutputPrefabsPath);
+                }
             }
-            if (GUILayout.Button("Open VRMA Folder"))
-            {
-                RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaExporter.OutputVrmaPath);
-                EditorUtility.RevealInFinder(RetargetApplianceVrmaExporter.OutputVrmaPath);
-            }
+
             EditorGUILayout.EndHorizontal();
+
+            // Second row of folder buttons (only show in legacy mode if VRMA round-trip is enabled)
+            if (_legacyMode && _exportGlbViaVrmaRoundTrip)
+            {
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Open VRMA->GLB Folder"))
+                {
+                    RetargetApplianceUtil.EnsureFolderExists(RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath);
+                    EditorUtility.RevealInFinder(RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath);
+                }
+                EditorGUILayout.EndHorizontal();
+            }
 
             EditorGUILayout.Space(10);
         }
@@ -762,6 +922,30 @@ namespace RetargetAppliance
             bool canProceed = true;
             string missingMessage = "";
 
+            // VRMA-first pipeline (new default)
+            if (!_legacyMode)
+            {
+                if (_exportVrmaLibrary && !RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                {
+                    missingMessage += "AnimationClipToVrma is required for VRMA export but is not installed.\n\n";
+                    canProceed = false;
+                }
+
+                if (_exportGlbFromVrma && !RetargetApplianceExporter.IsUnityGLTFAvailable())
+                {
+                    missingMessage += "UnityGLTF is required for GLB export but is not installed.\n\n";
+                    canProceed = false;
+                }
+
+                if (!canProceed)
+                {
+                    EditorUtility.DisplayDialog("Missing Dependencies", missingMessage, "OK");
+                }
+
+                return canProceed;
+            }
+
+            // Legacy mode checks
             if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
             {
                 if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
@@ -809,6 +993,20 @@ namespace RetargetAppliance
 
         private string GetExportButtonLabel()
         {
+            // VRMA-first pipeline (new default)
+            if (!_legacyMode)
+            {
+                if (_exportVrmaLibrary && _exportGlbFromVrma)
+                    return "Bake + Export VRMA + GLB";
+                else if (_exportVrmaLibrary)
+                    return "Bake + Export VRMA";
+                else if (_exportGlbFromVrma)
+                    return "Bake + Export GLB";
+                else
+                    return "Bake Only";
+            }
+
+            // Legacy mode
             switch (_exportFormat)
             {
                 case RetargetApplianceExporter.ExportFormat.GLB:
@@ -898,44 +1096,81 @@ namespace RetargetAppliance
                 }
             }
 
-            // Check exporters
-            if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+            // Check exporters based on pipeline mode
+            if (!_legacyMode)
             {
-                if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                // VRMA-first pipeline validation
+                messages.Add("\n[VRMA-first Pipeline]");
+
+                if (_exportVrmaLibrary)
                 {
-                    messages.Add("WARNING: UnityGLTF not installed. GLB export will fail.");
-                    hasWarnings = true;
+                    if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                    {
+                        messages.Add("WARNING: VRMA export enabled but AnimationClipToVrma not installed.");
+                        hasWarnings = true;
+                    }
+                    else
+                    {
+                        messages.Add("VRMA Exporter: OK");
+                    }
                 }
-                else
+
+                if (_exportGlbFromVrma)
                 {
-                    messages.Add("UnityGLTF: OK");
+                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                    {
+                        messages.Add("WARNING: UnityGLTF not installed. GLB export will fail.");
+                        hasWarnings = true;
+                    }
+                    else
+                    {
+                        messages.Add("UnityGLTF: OK (direct GLB from baked clips)");
+                    }
                 }
             }
-
-            if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
+            else
             {
-                if (!RetargetApplianceExporter.IsFBXExporterAvailable())
-                {
-                    messages.Add("WARNING: FBX Exporter not installed. FBX export will fail.");
-                    hasWarnings = true;
-                }
-                else
-                {
-                    messages.Add("FBX Exporter: OK");
-                }
-            }
+                // Legacy mode validation
+                messages.Add("\n[Legacy Mode]");
 
-            // Check VRMA exporter
-            if (_exportVrma)
-            {
-                if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
                 {
-                    messages.Add("WARNING: VRMA export enabled but AnimationClipToVrma not installed. VRMA export will be skipped.");
-                    hasWarnings = true;
+                    if (!RetargetApplianceExporter.IsUnityGLTFAvailable())
+                    {
+                        messages.Add("WARNING: UnityGLTF not installed. GLB export will fail.");
+                        hasWarnings = true;
+                    }
+                    else
+                    {
+                        messages.Add("UnityGLTF: OK");
+                    }
                 }
-                else
+
+                if (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both)
                 {
-                    messages.Add("VRMA Exporter: OK");
+                    if (!RetargetApplianceExporter.IsFBXExporterAvailable())
+                    {
+                        messages.Add("WARNING: FBX Exporter not installed. FBX export will fail.");
+                        hasWarnings = true;
+                    }
+                    else
+                    {
+                        messages.Add("FBX Exporter: OK");
+                    }
+                }
+
+                // Check VRMA exporter in legacy mode
+                if (_exportVrma)
+                {
+                    if (!RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                    {
+                        messages.Add("WARNING: VRMA export enabled but AnimationClipToVrma not installed. VRMA export will be skipped.");
+                        hasWarnings = true;
+                    }
+                    else
+                    {
+                        messages.Add("VRMA Exporter: OK");
+                    }
                 }
             }
 
@@ -982,7 +1217,7 @@ namespace RetargetAppliance
                     FPS = _bakeFPS,
                     IncludeRootMotion = _includeRootMotion,
                     ExportScale = _exportScale,
-                    VrmCorrections = _enableVrmCorrections ? CreateVrmCorrectionSettings() : null
+                    VrmCorrections = (_legacyMode && _enableVrmCorrections) ? CreateVrmCorrectionSettings() : null
                 };
 
                 int totalTargets = _vrmTargets.Count;
@@ -995,14 +1230,40 @@ namespace RetargetAppliance
                 int fbxFailCount = 0;
                 int vrmaSuccessCount = 0;
                 int vrmaFailCount = 0;
+                int vrmaRoundTripSuccessCount = 0;
+                int vrmaRoundTripFailCount = 0;
+                int glbDirectSuccessCount = 0;
+                int glbDirectFailCount = 0;
                 int bakeFailCount = 0;
 
-                bool exportGLB = _exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
-                bool exportFBX = _exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both;
-                bool exportVRMA = _exportVrma && RetargetApplianceVrmaExporter.IsVrmaExportAvailable();
+                // Determine export modes based on legacy vs VRMA-first pipeline
+                bool useLegacyPipeline = _legacyMode;
+                bool exportLegacyGLB = useLegacyPipeline && (_exportFormat == RetargetApplianceExporter.ExportFormat.GLB || _exportFormat == RetargetApplianceExporter.ExportFormat.Both);
+                bool exportFBX = useLegacyPipeline && (_exportFormat == RetargetApplianceExporter.ExportFormat.FBX || _exportFormat == RetargetApplianceExporter.ExportFormat.Both);
+
+                // VRMA-first pipeline exports
+                bool exportVRMA = useLegacyPipeline
+                    ? (_exportVrma && RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                    : (_exportVrmaLibrary && RetargetApplianceVrmaExporter.IsVrmaExportAvailable());
+                bool exportGlbViaVrma = useLegacyPipeline && _exportGlbViaVrmaRoundTrip && exportVRMA;
+                bool exportGlbDirect = !useLegacyPipeline && _exportGlbFromVrma && RetargetApplianceExporter.IsUnityGLTFAvailable();
+
+                // Log pipeline mode
+                if (useLegacyPipeline)
+                {
+                    RetargetApplianceUtil.LogInfo("[RetargetAppliance] Running in LEGACY mode");
+                }
+                else
+                {
+                    RetargetApplianceUtil.LogInfo("[RetargetAppliance] Running in VRMA-first pipeline mode");
+                }
 
                 // Log VRMA status at start
-                if (_exportVrma && !RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                if (!useLegacyPipeline && _exportVrmaLibrary && !RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
+                {
+                    RetargetApplianceUtil.LogWarning("VRMA export enabled but API not available. VRMA files will not be exported.");
+                }
+                if (useLegacyPipeline && _exportVrma && !RetargetApplianceVrmaExporter.IsVrmaExportAvailable())
                 {
                     RetargetApplianceUtil.LogWarning("VRMA export enabled but API not available. VRMA files will not be exported.");
                 }
@@ -1071,9 +1332,24 @@ namespace RetargetAppliance
                         exportRoot.name = $"{targetName}_Export";
                         exportRoot.hideFlags = HideFlags.HideAndDontSave;
 
+                        // Normalize transform so the export root is at origin with no rotation.
+                        // Clones inherit the scene instance's world transform, which causes
+                        // GLB viewers to auto-frame incorrectly.
+                        exportRoot.transform.SetParent(null);
+                        exportRoot.transform.position = Vector3.zero;
+                        exportRoot.transform.rotation = Quaternion.identity;
+
+                        // Disable Animator controller influence on the export clone
+                        var exportAnimator = exportRoot.GetComponent<Animator>();
+                        if (exportAnimator != null)
+                        {
+                            exportAnimator.runtimeAnimatorController = null;
+                        }
+
                         try
                         {
-                            if (exportGLB)
+                            // Legacy GLB export (only in legacy mode)
+                            if (exportLegacyGLB)
                             {
                                 totalExportsAttempted++;
                                 var glbResult = RetargetApplianceExporter.ExportAsGLB(
@@ -1086,15 +1362,16 @@ namespace RetargetAppliance
                                 if (glbResult.Success)
                                 {
                                     glbSuccessCount++;
-                                    RetargetApplianceUtil.LogInfo($"Exported GLB: {glbResult.ExportPath}");
+                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] Legacy GLB: OK -> {glbResult.ExportPath}");
                                 }
                                 else
                                 {
                                     glbFailCount++;
-                                    RetargetApplianceUtil.LogError($"GLB export failed for '{exportFileName}': {glbResult.Error}");
+                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] Legacy GLB: FAILED -> {glbResult.Error}");
                                 }
                             }
 
+                            // FBX export (only in legacy mode)
                             if (exportFBX)
                             {
                                 totalExportsAttempted++;
@@ -1108,12 +1385,12 @@ namespace RetargetAppliance
                                 if (fbxResult.Success)
                                 {
                                     fbxSuccessCount++;
-                                    RetargetApplianceUtil.LogInfo($"Exported FBX: {fbxResult.ExportPath}");
+                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] FBX: OK -> {fbxResult.ExportPath}");
                                 }
                                 else
                                 {
                                     fbxFailCount++;
-                                    RetargetApplianceUtil.LogError($"FBX export failed for '{exportFileName}': {fbxResult.Error}");
+                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] FBX: FAILED -> {fbxResult.Error}");
                                 }
                             }
 
@@ -1127,12 +1404,93 @@ namespace RetargetAppliance
                                 if (RetargetApplianceVrmaExporter.TryExportVrma(bakeResult.TargetInstance, savedClip, vrmaOutPath, out string vrmaError))
                                 {
                                     vrmaSuccessCount++;
-                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] VRMA export: {targetName}__{sourceClipName} -> {vrmaOutPath} (OK)");
+                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] VRMA: OK -> {vrmaOutPath}");
+
+                                    // GLB via VRMA round-trip (legacy mode only)
+                                    if (exportGlbViaVrma)
+                                    {
+                                        // Create a fresh clone for GLB export
+                                        var glbExportClone = Instantiate(bakeResult.TargetInstance);
+                                        glbExportClone.name = $"{targetName}_VrmaGlbExport";
+                                        glbExportClone.hideFlags = HideFlags.HideAndDontSave;
+
+                                        // Normalize transform before passing to TryExportGlbFromVrma,
+                                        // which will clone this again internally. Without this, the clone
+                                        // inherits the scene instance's world position/rotation, causing
+                                        // the final GLB to be offset from origin.
+                                        glbExportClone.transform.SetParent(null);
+                                        glbExportClone.transform.position = Vector3.zero;
+                                        glbExportClone.transform.rotation = Quaternion.identity;
+
+                                        // Disable Animator controller influence
+                                        var glbAnimator = glbExportClone.GetComponent<Animator>();
+                                        if (glbAnimator != null)
+                                        {
+                                            glbAnimator.runtimeAnimatorController = null;
+                                        }
+
+                                        try
+                                        {
+                                            RetargetApplianceVrmaRoundTrip.EnsureGlbOutputFolder(targetName);
+
+                                            string vrmaGlbPath = RetargetApplianceVrmaRoundTrip.GetGlbFromVrmaOutputPath(targetName, sourceClipName);
+
+                                            if (RetargetApplianceVrmaRoundTrip.TryExportGlbFromVrma(
+                                                glbExportClone,
+                                                vrmaOutPath,
+                                                vrmaGlbPath,
+                                                _bakeFPS,
+                                                out string vrmaGlbError))
+                                            {
+                                                vrmaRoundTripSuccessCount++;
+                                                RetargetApplianceUtil.LogInfo($"[RetargetAppliance] VRMA->GLB OK: {targetName}__{sourceClipName}");
+                                            }
+                                            else
+                                            {
+                                                vrmaRoundTripFailCount++;
+                                                RetargetApplianceUtil.LogError($"[RetargetAppliance] VRMA->GLB FAILED: {targetName}__{sourceClipName}");
+                                                RetargetApplianceUtil.LogError($"[RetargetAppliance] VRMA->GLB Error: {vrmaGlbError}");
+                                            }
+                                        }
+                                        finally
+                                        {
+                                            DestroyImmediate(glbExportClone);
+                                        }
+                                    }
                                 }
                                 else
                                 {
                                     vrmaFailCount++;
-                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] VRMA export failed: {vrmaError}");
+                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] VRMA: FAILED -> {vrmaError}");
+                                }
+                            }
+
+                            // Direct GLB export from BAKED clip (VRMA-first pipeline)
+                            // Uses the full-fidelity baked clip directly, bypassing the lossy
+                            // VRMA round-trip that only samples 22 HumanBodyBones.
+                            if (exportGlbDirect)
+                            {
+                                totalExportsAttempted++;
+                                string glbOutputFolder = $"{RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath}/{targetName}";
+                                RetargetApplianceUtil.EnsureFolderExists(glbOutputFolder);
+
+                                var glbResult = RetargetApplianceExporter.ExportAsGLB(
+                                    exportRoot,
+                                    targetName,
+                                    singleClipList,
+                                    settings,
+                                    exportFileName,
+                                    glbOutputFolder);
+
+                                if (glbResult.Success)
+                                {
+                                    glbDirectSuccessCount++;
+                                    RetargetApplianceUtil.LogInfo($"[RetargetAppliance] GLB (direct): OK -> {glbResult.ExportPath}");
+                                }
+                                else
+                                {
+                                    glbDirectFailCount++;
+                                    RetargetApplianceUtil.LogError($"[RetargetAppliance] GLB (direct): FAILED -> {glbResult.Error}");
                                 }
                             }
                         }
@@ -1153,6 +1511,7 @@ namespace RetargetAppliance
                 // Build summary with detailed statistics
                 var summaryLines = new List<string>();
                 summaryLines.Add("Bake and Export Complete!\n");
+                summaryLines.Add($"Pipeline: {(useLegacyPipeline ? "Legacy" : "VRMA-first")}");
                 summaryLines.Add($"Source clips found: {totalClipsFound}");
                 summaryLines.Add($"Targets processed: {totalTargets}");
                 summaryLines.Add($"Total clips baked: {totalBakedClips}");
@@ -1165,9 +1524,9 @@ namespace RetargetAppliance
 
                 summaryLines.Add("");
 
-                if (exportGLB)
+                if (exportLegacyGLB)
                 {
-                    summaryLines.Add($"GLB: {glbSuccessCount} successful, {glbFailCount} failed");
+                    summaryLines.Add($"Legacy GLB: {glbSuccessCount} successful, {glbFailCount} failed");
                 }
 
                 if (exportFBX)
@@ -1178,12 +1537,31 @@ namespace RetargetAppliance
                 if (exportVRMA)
                 {
                     summaryLines.Add($"VRMA: {vrmaSuccessCount} successful, {vrmaFailCount} failed");
+
+                    if (exportGlbViaVrma)
+                    {
+                        summaryLines.Add($"VRMA->GLB: {vrmaRoundTripSuccessCount} successful, {vrmaRoundTripFailCount} failed");
+                    }
                 }
 
-                summaryLines.Add($"\nOutput: {RetargetApplianceUtil.OutputExportPath}");
+                if (exportGlbDirect)
+                {
+                    summaryLines.Add($"GLB (direct): {glbDirectSuccessCount} successful, {glbDirectFailCount} failed");
+                }
+
+                summaryLines.Add("");
+
+                if (useLegacyPipeline)
+                {
+                    summaryLines.Add($"Output: {RetargetApplianceUtil.OutputExportPath}");
+                }
                 if (exportVRMA && vrmaSuccessCount > 0)
                 {
                     summaryLines.Add($"VRMA: {RetargetApplianceVrmaExporter.OutputVrmaPath}");
+                }
+                if ((exportGlbViaVrma && vrmaRoundTripSuccessCount > 0) || (exportGlbDirect && glbDirectSuccessCount > 0))
+                {
+                    summaryLines.Add($"GLB: {RetargetApplianceVrmaRoundTrip.OutputGlbFromVrmaPath}");
                 }
 
                 string summary = string.Join("\n", summaryLines);
