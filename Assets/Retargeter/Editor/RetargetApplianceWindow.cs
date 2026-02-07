@@ -1217,7 +1217,7 @@ namespace RetargetAppliance
                     FPS = _bakeFPS,
                     IncludeRootMotion = _includeRootMotion,
                     ExportScale = _exportScale,
-                    VrmCorrections = (_legacyMode && _enableVrmCorrections) ? CreateVrmCorrectionSettings() : null
+                    VrmCorrections = _enableVrmCorrections ? CreateVrmCorrectionSettings() : null
                 };
 
                 int totalTargets = _vrmTargets.Count;
